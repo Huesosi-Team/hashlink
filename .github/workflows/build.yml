@@ -76,8 +76,6 @@ jobs:
               libuv1-dev${SUFFIX} \
               libvorbis-dev${SUFFIX} \
               libsqlite3-dev${SUFFIX} \
-              libsdl3-dev \
-              libsdl3-image-dev \
               pkg-config \
               ${EXTRA_APT_PKGS}
 
