@@ -10,27 +10,8 @@ add_library(fmt.hdll
 )
 
 if (WIN32)
-    set(PNG_INCLUDE_DIRS ${INCLUDES_BASE_DIR}/png)
-    target_sources(fmt.hdll PRIVATE
-        ${INCLUDES_BASE_DIR}/png/png.c
-        ${INCLUDES_BASE_DIR}/png/pngerror.c
-        ${INCLUDES_BASE_DIR}/png/pngget.c
-        ${INCLUDES_BASE_DIR}/png/pngmem.c
-        ${INCLUDES_BASE_DIR}/png/pngpread.c
-        ${INCLUDES_BASE_DIR}/png/pngread.c
-        ${INCLUDES_BASE_DIR}/png/pngrio.c
-        ${INCLUDES_BASE_DIR}/png/pngrtran.c
-        ${INCLUDES_BASE_DIR}/png/pngrutil.c
-        ${INCLUDES_BASE_DIR}/png/pngset.c
-        ${INCLUDES_BASE_DIR}/png/pngtrans.c
-        ${INCLUDES_BASE_DIR}/png/pngwio.c
-        ${INCLUDES_BASE_DIR}/png/pngwrite.c
-        ${INCLUDES_BASE_DIR}/png/pngwtran.c
-        ${INCLUDES_BASE_DIR}/png/pngwutil.c)
-endif()
-
-if (WIN32)
     set(VORBIS_INCLUDE_DIR ${INCLUDES_BASE_DIR}/vorbis)
+    set(ZLIB_INCLUDE_DIRS ${INCLUDES_BASE_DIR}/zlib)
 
     target_sources(fmt.hdll PRIVATE
         ${INCLUDES_BASE_DIR}/vorbis/bitrate.c
@@ -55,75 +36,6 @@ if (WIN32)
         ${INCLUDES_BASE_DIR}/vorbis/synthesis.c
         ${INCLUDES_BASE_DIR}/vorbis/vorbisfile.c
         ${INCLUDES_BASE_DIR}/vorbis/window.c
-    )
-endif()
-
-if(WIN32)
-    set(ZLIB_INCLUDE_DIRS ${INCLUDES_BASE_DIR}/zlib)
-
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(TurboJPEG_INCLUDE_DIRS ${INCLUDES_BASE_DIR}/turbojpeg ${INCLUDES_BASE_DIR}/turbojpeg/x64)
-        find_library(TurboJPEG_LIBRARIES simd PATHS ${INCLUDES_BASE_DIR}/turbojpeg/x64)
-    else()
-        set(TurboJPEG_INCLUDE_DIRS ${INCLUDES_BASE_DIR}/turbojpeg ${INCLUDES_BASE_DIR}/turbojpeg/x86)
-        find_library(TurboJPEG_LIBRARIES simd PATHS ${INCLUDES_BASE_DIR}/turbojpeg/x86)
-    endif()
-
-    target_sources(fmt.hdll PRIVATE
-        ${INCLUDES_BASE_DIR}/turbojpeg/jaricom.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcapimin.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcapistd.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcarith.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jccoefct.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jccolor.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcdctmgr.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jchuff.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcinit.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcmainct.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcmarker.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcmaster.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcomapi.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcparam.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcphuff.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcprepct.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jcsample.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jctrans.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdapimin.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdapistd.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdarith.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdatadst-tj.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdatadst.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdatasrc-tj.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdatasrc.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdcoefct.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdcolor.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jddctmgr.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdhuff.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdinput.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdmainct.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdmarker.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdmaster.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdmerge.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdphuff.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdpostct.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdsample.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jdtrans.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jerror.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jfdctflt.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jfdctfst.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jfdctint.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jidctflt.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jidctfst.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jidctint.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jidctred.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jmemmgr.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jmemnobs.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jquant1.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jquant2.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jsimd.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/jutils.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/transupp.c
-        ${INCLUDES_BASE_DIR}/turbojpeg/turbojpeg.c
         ${INCLUDES_BASE_DIR}/zlib/adler32.c
         ${INCLUDES_BASE_DIR}/zlib/crc32.c
         ${INCLUDES_BASE_DIR}/zlib/deflate.c
@@ -136,57 +48,12 @@ if(WIN32)
 elseif(DOWNLOAD_DEPENDENCIES)
     find_package(ZLIB REQUIRED)
 
-	ExternalProject_Add(turbojpeg-project
-        URL https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.1/libjpeg-turbo-3.1.1.tar.gz
-        URL_HASH SHA256=aadc97ea91f6ef078b0ae3a62bba69e008d9a7db19b34e4ac973b19b71b4217c
-        CMAKE_ARGS
-            ${CMAKE_COMMON_DEP_ARGS}
-            -DBUILD_SHARED_LIBS=OFF
-            -DCMAKE_INSTALL_LIBDIR=lib
-        # INSTALL_BYPRODUCTS in CMake 3.26+
-        BUILD_BYPRODUCTS <INSTALL_DIR>/lib/libturbojpeg.a
-    )
-
-    ExternalProject_Get_Property(turbojpeg-project INSTALL_DIR)
-
-    add_library(turbojpeg STATIC IMPORTED)
-    set_target_properties(turbojpeg PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libturbojpeg.a)
-
-    set(TurboJPEG_INCLUDE_DIRS ${INSTALL_DIR}/${CMAKE_INSTALL_INCLUDEDIR})
-    set(TurboJPEG_LIBRARIES turbojpeg)
-
-    add_dependencies(turbojpeg turbojpeg-project)
-
-    ExternalProject_Add(libpng
-        URL https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.50.tar.gz
-        URL_HASH SHA256=71158e53cfdf2877bc99bcab33641d78df3f48e6e0daad030afe9cb8c031aa46
-        CMAKE_ARGS
-            ${CMAKE_COMMON_DEP_ARGS}
-            -DPNG_SHARED=OFF
-            -DPNG_TESTS=OFF
-            -DPNG_TOOLS=OFF
-            -DPNG_FRAMEWORK=OFF
-            -DCMAKE_INSTALL_LIBDIR=lib
-        # INSTALL_BYPRODUCTS in CMake 3.26+
-        BUILD_BYPRODUCTS <INSTALL_DIR>/lib/libpng.a
-    )
-    ExternalProject_Get_Property(libpng INSTALL_DIR)
-
-    add_library(png STATIC IMPORTED)
-    set_target_properties(png PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libpng.a)
-
-    set(PNG_INCLUDE_DIRS ${INSTALL_DIR}/${CMAKE_INSTALL_INCLUDEDIR})
-    set(PNG_LIBRARIES png)
-
-    add_dependencies(png libpng)
-
     ExternalProject_Add(libogg
         URL https://github.com/xiph/ogg/releases/download/v1.3.6/libogg-1.3.6.tar.gz
         URL_HASH SHA256=83e6704730683d004d20e21b8f7f55dcb3383cdf84c0daedf30bde175f774638
         CMAKE_ARGS
             ${CMAKE_COMMON_DEP_ARGS}
             -DCMAKE_INSTALL_LIBDIR=lib
-        # INSTALL_BYPRODUCTS in CMake 3.26+
         BUILD_BYPRODUCTS <INSTALL_DIR>/lib/libogg.a
     )
     ExternalProject_Get_Property(libogg INSTALL_DIR)
@@ -203,8 +70,7 @@ elseif(DOWNLOAD_DEPENDENCIES)
             -DOGG_LIBRARY=${OGG_LIBRARY}
             -DOGG_INCLUDE_DIR=${OGG_INCLUDE_DIR}
             -DCMAKE_INSTALL_LIBDIR=lib
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 # https://github.com/xiph/vorbis/issues/113
-        # INSTALL_BYPRODUCTS in CMake 3.26+
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
         BUILD_BYPRODUCTS
             <INSTALL_DIR>/lib/libvorbis.a
             <INSTALL_DIR>/lib/libvorbisfile.a
@@ -229,16 +95,71 @@ elseif(DOWNLOAD_DEPENDENCIES)
     add_dependencies(ogg libogg)
 else()
     find_package(ZLIB REQUIRED)
-    find_package(PNG REQUIRED)
-
-    find_package(TurboJPEG QUIET)
-    if(NOT TurboJPEG_FOUND)
-        pkg_check_modules(TurboJPEG REQUIRED libjpeg)
-    endif()
 
     find_package(OggVorbis QUIET)
     if(NOT OGGVORBIS_FOUND)
         pkg_check_modules(OGGVORBIS REQUIRED vorbis vorbisenc vorbisfile)
+    endif()
+endif()
+
+# --- SDL3 & SDL3_image ---
+set(SDL3_IMAGE_INCLUDE_DIRS "")
+set(SDL3_IMAGE_LIBRARIES "")
+
+if(TARGET SDL3::SDL3)
+    list(APPEND SDL3_IMAGE_LIBRARIES SDL3::SDL3)
+else()
+    find_package(SDL3 QUIET)
+    if(SDL3_FOUND)
+        list(APPEND SDL3_IMAGE_LIBRARIES SDL3::SDL3)
+    elseif(WIN32)
+        set(SDL_ARCH_DIR ${INCLUDES_BASE_DIR}/sdl/lib/$<IF:$<EQUAL:${CMAKE_SIZEOF_VOID_P},8>,x64,x86>)
+        find_library(SDL3_LIB NAMES SDL3 PATHS
+            ${INCLUDES_BASE_DIR}/sdl/lib/x64
+            ${INCLUDES_BASE_DIR}/sdl/lib/x86
+            ${INCLUDES_BASE_DIR}/sdl/lib
+            NO_DEFAULT_PATH
+        )
+        if(NOT SDL3_LIB)
+            find_library(SDL3_LIB NAMES SDL3 REQUIRED)
+        endif()
+        list(APPEND SDL3_IMAGE_INCLUDE_DIRS
+            ${INCLUDES_BASE_DIR}/sdl
+            ${INCLUDES_BASE_DIR}/sdl/include
+        )
+        list(APPEND SDL3_IMAGE_LIBRARIES ${SDL3_LIB})
+    else()
+        pkg_check_modules(SDL3 REQUIRED sdl3)
+        list(APPEND SDL3_IMAGE_INCLUDE_DIRS ${SDL3_INCLUDE_DIRS})
+        list(APPEND SDL3_IMAGE_LIBRARIES ${SDL3_LIBRARIES})
+    endif()
+endif()
+
+if(TARGET SDL3_image::SDL3_image)
+    list(APPEND SDL3_IMAGE_LIBRARIES SDL3_image::SDL3_image)
+else()
+    find_package(SDL3_image QUIET)
+    if(SDL3_image_FOUND)
+        list(APPEND SDL3_IMAGE_LIBRARIES SDL3_image::SDL3_image)
+    elseif(WIN32)
+        find_library(SDL3_IMAGE_LIB NAMES SDL3_image PATHS
+            ${INCLUDES_BASE_DIR}/sdl-image/lib/x64
+            ${INCLUDES_BASE_DIR}/sdl-image/lib/x86
+            ${INCLUDES_BASE_DIR}/sdl-image/lib
+            NO_DEFAULT_PATH
+        )
+        if(NOT SDL3_IMAGE_LIB)
+            find_library(SDL3_IMAGE_LIB NAMES SDL3_image REQUIRED)
+        endif()
+        list(APPEND SDL3_IMAGE_INCLUDE_DIRS
+            ${INCLUDES_BASE_DIR}/sdl-image
+            ${INCLUDES_BASE_DIR}/sdl-image/include
+        )
+        list(APPEND SDL3_IMAGE_LIBRARIES ${SDL3_IMAGE_LIB})
+    else()
+        pkg_check_modules(SDL3_IMG REQUIRED sdl3-image)
+        list(APPEND SDL3_IMAGE_INCLUDE_DIRS ${SDL3_IMG_INCLUDE_DIRS})
+        list(APPEND SDL3_IMAGE_LIBRARIES ${SDL3_IMG_LIBRARIES})
     endif()
 endif()
 
@@ -247,8 +168,7 @@ set_as_hdll(fmt)
 target_include_directories(fmt.hdll
     PRIVATE
     ${ZLIB_INCLUDE_DIRS}
-    ${PNG_INCLUDE_DIRS}
-    ${TurboJPEG_INCLUDE_DIRS}
+    ${SDL3_IMAGE_INCLUDE_DIRS}
     ${VORBIS_INCLUDE_DIR}
     ${MINIMP3_INCLUDE_DIR}
     ${MIKKTSPACE_INCLUDE_DIR}
@@ -257,8 +177,7 @@ target_include_directories(fmt.hdll
 target_link_libraries(fmt.hdll
     libhl
     ${ZLIB_LIBRARIES}
-    ${PNG_LIBRARIES}
-    ${TurboJPEG_LIBRARIES}
+    ${SDL3_IMAGE_LIBRARIES}
     ${OGGVORBIS_LIBRARIES}
 )
 
