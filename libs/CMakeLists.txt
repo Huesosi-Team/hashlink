@@ -13,6 +13,16 @@ function(set_as_hdll target)
         OUTPUT_NAME ${target}
         SUFFIX ${HDLL_SUFFIX}
     )
+    if (APPLE)
+        # Keep macOS HDLLs relocatable in both the build and install trees.
+        # CMake otherwise embeds the absolute build/bin directory because the
+        # target links libhl. Copying such an HDLL beside another compatible
+        # VM can silently load HashLink's build-tree libhl as a second runtime.
+        set_target_properties(${target}.hdll PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "@loader_path"
+        )
+    endif()
     if (NOT MSVC AND NOT APPLE)
         target_link_options(${target}.hdll PRIVATE "-Wl,--no-undefined")
     endif()
@@ -44,6 +54,11 @@ endif()
 
 if(WIN32)
     add_subdirectory(directx)
+endif()
+
+option(WITH_VULKAN "Build vulkan.hdll." ON)
+if(WITH_VULKAN AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    add_subdirectory(vulkan)
 endif()
 
 option(WITH_FMT "Build fmt.hdll." ON)

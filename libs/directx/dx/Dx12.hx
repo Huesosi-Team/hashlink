@@ -4,10 +4,19 @@ import haxe.Int64;
 
 typedef DriverInstance = hl.Abstract<"dx_driver">;
 
+typedef Device = hl.Abstract<"dx_device">;
+
+typedef Adapter = hl.Abstract<"dx_adapter">;
+
+typedef Factory = hl.Abstract<"dx_factory">;
+
+typedef SwapChain = hl.Abstract<"dx_swapchain">;
+
 enum DriverInitFlag {
 	DEBUG;
 	GPU_BASED_VALIDATION;
 	BREAK_ON_ERROR;
+	DRED;
 }
 
 enum abstract Constant(Int) to Int {
@@ -72,6 +81,11 @@ abstract CommandQueue(Resource) {
 	public function executeCommandLists( commandLists : hl.CArray<CommandList>, count : Int ) {}
 	public function signal( fence : Fence, value : Int64 ) {}
 	public function wait( fence : Fence, value : Int64 ) {}
+	public function present( vsync : Bool ) {}
+	public function suspend() {}
+	public function resume() {}
+	@:hlNative("dx12","command_queue_get_timestamp_frequency")
+	public function getTimestampFrequency() : Int64 { return 0; }
 	static function create( type : CommandListType ) : Resource { return null; }
 }
 
@@ -196,7 +210,6 @@ abstract CommandList(Resource) {
 	}
 
 	public function close() {}
-	public function execute() {}
 	public function clearRenderTargetView( rtv : Address, color : ClearColor ) {}
 	public function clearDepthStencilView( rtv : Address, flags : ClearFlags, depth : Single, stencil : Int ) {}
 	public function reset( alloc : CommandAllocator, state : PipelineState ) {}
@@ -277,6 +290,13 @@ abstract WaitEvent(hl.Abstract<"dx_event">) {
 
 	public function wait( time : Int ) : Bool { return false; }
 	static function create( state : Bool ) : WaitEvent { return null; }
+}
+
+@:hlNative("dx12","aftermath_")
+abstract AftermathContext(hl.Abstract<"dx_aftermath_context">) {
+	public static function createContext( list : CommandList ) : AftermathContext { return null; }
+	public function beginEvent( name : hl.Bytes ) {}
+	public function endEvent() {}
 }
 
 enum abstract DescriptorHeapType(Int) {
@@ -1559,6 +1579,26 @@ enum abstract QueryHeapType(Int) {
 abstract QueryHeap(Resource) {
 }
 
+@:forward(release, setName)
+abstract Heap(Resource) {
+}
+
+@:struct class HeapDesc {
+	public var sizeInBytes : Int64;
+	@:packed public var properties(default,null) : HeapProperties;
+	public var alignment : Int64;
+	public var flags : haxe.EnumFlags<HeapFlag>;
+	public function new() {
+	}
+}
+
+@:struct class ResourceAllocationInfo {
+	public var sizeInBytes : Int64;
+	public var alignment : Int64;
+	public function new() {
+	}
+}
+
 enum abstract PredicationOp(Int) {
 	var EQUAL_ZERO = 0;
 	var NOT_EQUAL_ZERO = 1;
@@ -1630,6 +1670,30 @@ enum abstract ShaderModel(Int) to Int {
   var HIGHEST_SHADER_MODEL;
 }
 
+@:struct class QueryVideoMemoryInfo {
+	public var budget : Int64;
+	public var currentUsage : Int64;
+	public var availableForReservation : Int64;
+	public var currentReservation : Int64;
+	public function new() {}
+}
+
+@:struct class InfoQueueFilterDesc {
+	public var numCategories : Int;
+	public var categoryList : hl.Bytes;
+	public var numSeverities : Int;
+	public var severityList : hl.Bytes;
+	public var numIDs : Int;
+	public var idList : hl.Bytes;
+	public function new() {}
+}
+
+@:struct class InfoQueueFilter {
+	@:packed public var allowList(default, null) : InfoQueueFilterDesc;
+	@:packed public var denyList(default, null) : InfoQueueFilterDesc;
+	public function new() {}
+}
+
 @:hlNative("dx12")
 class Dx12 {
 
@@ -1637,7 +1701,31 @@ class Dx12 {
 		return dxCreate(@:privateAccess win.win, flags, deviceName == null ? null : @:privateAccess deviceName.bytes);
 	}
 
+	public static function getDevice() : Device {
+		return null;
+	}
+
+	public static function getFactory() : Factory {
+		return null;
+	}
+
+	public static function getAdapter() : Adapter {
+		return null;
+	}
+
+	public static function setDevice(device : Device) {
+	}
+
+	public static function setFactory(factory : Factory) {
+	}
+
+	public static function setSwapChain(swapChain : SwapChain) {
+	}
+
 	public static function flushMessages() {
+	}
+
+	public static function suppressDebugMessages( filter : InfoQueueFilter ) : Void {
 	}
 
 	public static function getDescriptorHandleIncrementSize( type : DescriptorHeapType ) : Int {
@@ -1693,30 +1781,26 @@ class Dx12 {
 		return null;
 	}
 
+	public static function createHeap( desc : HeapDesc ) : Heap {
+		return null;
+	}
+
+	public static function createPlacedResource( heap : Heap, offset : Int64, desc : ResourceDesc, initialState : ResourceState, clearValue : ClearValue ) : GpuResource {
+		return null;
+	}
+
+	public static function getResourceAllocationInfo( desc : ResourceDesc, info : ResourceAllocationInfo ) {
+	}
+
 	public static function createCommandSignature( desc : CommandSignatureDesc, root : RootSignature ) : CommandSignature {
 		return null;
 	}
 
-	public static function resize( width : Int, height : Int, bufferCount : Int, format : DxgiFormat ) {
+	public static function resize( directQueue : CommandQueue, width : Int, height : Int, bufferCount : Int, format : DxgiFormat ) {
 	}
 
 	public static function updateSubResource( commandList : CommandList, dst : GpuResource, src : GpuResource, srcOffset : Int64, first : Int, count : Int, data : SubResourceData ) : Bool {
 		return false;
-	}
-
-	public static function signal( fence : Fence, value : Int64 ) {
-	}
-
-	public static function wait( fence : Fence, value : Int64 ) {
-	}
-
-	public static function present( vsync : Bool ) {
-	}
-
-	public static function suspend() {
-	}
-
-	public static function resume() {
 	}
 
 	public static function getConstant( index : Int ) : Int {
@@ -1726,7 +1810,8 @@ class Dx12 {
 	public static function copyDescriptorsSimple( numDescriptors : Int, dstCpuAddress : Address, srcCpuAddress : Address, heapType : DescriptorHeapType ) {
 	}
 
-	public static function checkFeatureSupport( feature : Dx12Feature, data : hl.Bytes, dataSize : Int ) {
+	public static function checkFeatureSupport( feature : Dx12Feature, data : hl.Bytes, dataSize : Int ) : Bool {
+		return false;
 	}
 
 	public static function getDeviceName() {
@@ -1741,11 +1826,6 @@ class Dx12 {
 			out.push(@:privateAccess String.fromUCS2(arr[i]));
 		}
 		return out;
-	}
-
-	@:hlNative("dx12","get_timestamp_frequency")
-	public static function getTimestampFrequency() : Int64 {
-		return 0;
 	}
 
 	@:hlNative("dx12", "list_devices")
@@ -1763,8 +1843,16 @@ class Dx12 {
 		return 0;
 	}
 
+	@:hlNative("dx12", "query_video_memory_info")
+	public static function queryVideoMemoryInfo( group : Int, infos : QueryVideoMemoryInfo ) : Void {
+	}
+
 	@:hlNative("dx12", "create")
 	static function dxCreate( win : hl.Abstract<"dx_window">, flags : DriverInitFlags, deviceName : hl.Bytes ) : DriverInstance {
 		return null;
+	}
+
+	@:hlNative("dx12", "set_gpu_crash_handler")
+	public static function setGpuCrashHandler( f : (name : hl.Bytes, bytes : hl.Bytes, size : Int, lastFile : Bool) -> Void ) {
 	}
 }

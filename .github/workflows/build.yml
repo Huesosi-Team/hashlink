@@ -13,123 +13,42 @@ defaults:
 
 jobs:
 
+  # Jobs are split per OS so tests only wait for their own OS builds.
+  # Steps are defined once in the linux jobs and reused via YAML anchors.
+
   ###########################################################
-  build:
+  build-linux:
   ###########################################################
     runs-on: ${{ matrix.runner }}
 
     strategy:
       fail-fast: false
       matrix:
-        target: [linux, darwin, windows]
-        architecture: [32, 64, arm64]
-        build_system: [make, cmake, cmake-mingw, cmake-clang-cl, vs2019, makegcc14]
+        target: [linux]
+        architecture: [64, arm64]
+        build_system: [make, cmake, makegcc14]
 
         include:
           - target: linux
-            archive_ext: tar.gz
-
-          - target: linux
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             haxe_nightly_dir: linux64
+            archive_ext: tar.gz
 
           - target: linux
             architecture: arm64
             runner: ubuntu-24.04-arm
             haxe_nightly_dir: linux-arm64
 
-          - target: darwin
-            haxe_nightly_dir: mac
-            archive_ext: tar.gz
-
-          - target: darwin
-            architecture: 64
-            runner: macos-15-intel
-
-          - target: darwin
-            architecture: arm64
-            runner: macos-latest
-
           - build_system: cmake
             cmake_configuration: RelWithDebInfo
 
-          - build_system: cmake-mingw
-            cmake_configuration: RelWithDebInfo
-
-          - build_system: cmake-clang-cl
-            cmake_configuration: RelWithDebInfo
-
-          - build_system: vs2019
-            msbuild_configuration: Release
-
-          - target: windows
-            runner: windows-2022 # has VS 2022 preinstalled which supports PlatformToolset <= v142, WindowsTargetPlatformVersion 10
-            haxe_nightly_dir: windows64
-            archive_ext: zip
-
-          - target: windows
-            build_system: cmake
-            cmake_generator: Visual Studio 17 2022
-
-          - target: windows
-            runner: windows-2025
-            build_system: cmake-mingw
-
-          - target: windows
-            build_system: cmake-clang-cl
-            cmake_generator: Visual Studio 17 2022
-
-          - target: windows
-            architecture: 32
-            ffmpeg_url: https://github.com/HaxeFoundation/hashlink/files/5648055/ffmpeg-3.4.2-win32-dev.zip
-            architecture_string: Win32
-
-          - target: windows
-            architecture: 64
-            ffmpeg_url: https://github.com/HaxeFoundation/hashlink/files/5648056/ffmpeg-3.4.2-win64-dev.zip
-            architecture_string: x64
-
-        exclude:
-          - target: linux
-            build_system: vs2019
-
-          - target: darwin
-            build_system: vs2019
-
-          - target: darwin
-            architecture: 32
-
-          - target: windows
-            architecture: arm64
-
-          - target: windows
-            build_system: make
-
-          - target: darwin
-            build_system: makegcc14
-
-          - target: windows
-            build_system: makegcc14
-
-          - target: darwin
-            build_system: cmake-mingw
-
-          - target: linux
-            build_system: cmake-mingw
-
-          - target: darwin
-            build_system: cmake-clang-cl
-
-          - target: linux
-            build_system: cmake-clang-cl
-
-    steps:
+    steps: &build-steps
     - name: "SCM Checkout"
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: "Add msbuild to PATH"
-      if: matrix.build_system == 'vs2019'
-      uses: microsoft/setup-msbuild@v2
+      if: matrix.build_system == 'vs2026'
+      uses: microsoft/setup-msbuild@v3
 
     - name: "Mac homebrew workaround"
       if: matrix.target == 'darwin'
@@ -156,18 +75,46 @@ jobs:
               libmbedtls-dev${SUFFIX} \
               libopenal-dev${SUFFIX} \
               libpng-dev${SUFFIX} \
-              libsdl2-dev \
               libturbojpeg-dev${SUFFIX} \
               libuv1-dev${SUFFIX} \
               libvorbis-dev${SUFFIX} \
               libsqlite3-dev${SUFFIX} \
               ${EXTRA_APT_PKGS}
+
+            # ref https://github.com/libsdl-org/SDL/blob/main/docs/README-linux.md#build-dependencies
+            sudo apt-get install --no-install-recommends -y \
+              libasound2-dev \
+              libpulse-dev \
+              libaudio-dev \
+              libjack-dev \
+              libsndio-dev \
+              libx11-dev \
+              libxext-dev \
+              libxrandr-dev \
+              libxcursor-dev \
+              libxfixes-dev \
+              libxi-dev \
+              libxss-dev \
+              libxtst-dev \
+              libxkbcommon-dev \
+              libdrm-dev \
+              libgbm-dev \
+              libgl1-mesa-dev \
+              libgles2-mesa-dev \
+              libegl1-mesa-dev \
+              libdbus-1-dev \
+              libibus-1.0-dev \
+              libudev-dev \
+              libpipewire-0.3-dev \
+              libwayland-dev \
+              libdecor-0-dev \
+              liburing-dev
             ;;
 
           darwin)
             if [ "${{matrix.build_system}}" != "cmake" ]; then
               brew update
-              brew bundle
+              HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew bundle --no-upgrade
             fi
             ;;
 
@@ -181,10 +128,10 @@ jobs:
             else
               SDL_SUFFIX=VC
             fi
-            curl -fsSL --retry 3 --retry-delay 5 -o /tmp/sdl.zip https://www.libsdl.org/release/SDL2-devel-2.30.2-${SDL_SUFFIX}.zip
+            curl -fsSL --retry 3 --retry-delay 5 -o /tmp/sdl.zip https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-devel-3.4.10-${SDL_SUFFIX}.zip
             curl -fsSL --retry 3 --retry-delay 5 -o /tmp/openal.zip https://github.com/kcat/openal-soft/releases/download/1.23.1/openal-soft-1.23.1-bin.zip
             curl -fsSL --retry 3 --retry-delay 5 -o /tmp/ffmpeg.zip ${{ matrix.ffmpeg_url }}
-            7z x /tmp/sdl.zip    -oinclude; mv include/SDL2*   include/sdl
+            7z x /tmp/sdl.zip    -oinclude; mv include/SDL3*   include/sdl
             7z x /tmp/openal.zip -oinclude; mv include/openal* include/openal
             7z x /tmp/ffmpeg.zip -oinclude; mv include/ffmpeg* include/ffmpeg
             ;;
@@ -209,7 +156,7 @@ jobs:
           gcc --version
 
     - name: Install haxe
-      uses: tobil4sk/setup-haxe@9d1527c4bb9d1d449d196a0822118692ceeac457
+      uses: krdlab/setup-haxe@v2
       with:
         haxe-version: latest
 
@@ -220,6 +167,18 @@ jobs:
         haxelib setup ~/haxelib
         haxelib install hashlink
         haxelib list
+
+    - name: "Build and install SDL3"
+      if: runner.os == 'Linux'
+      run: |
+        wget https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz
+        tar -xzvf SDL3-3.4.10.tar.gz
+        cd SDL3-3.4.10/
+        mkdir build
+        cd build
+        cmake ..
+        make
+        sudo make install
 
 
     - name: "Build: HashLink"
@@ -253,7 +212,8 @@ jobs:
                   -DCMAKE_TOOLCHAIN_FILE=other/cmake/linux32.toolchain.cmake
                 ;;
               linux*)
-                cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }} ;;
+                cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }}
+                ;;
             esac
 
             cmake --build build --config ${{ matrix.cmake_configuration }}
@@ -262,7 +222,7 @@ jobs:
 
           cmake-mingw)
             cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }} \
-              -DWITH_DX12=OFF
+              -DWITH_DX12=OFF -DWITH_VULKAN=OFF
 
             cmake --build build --config ${{ matrix.cmake_configuration }} --parallel
             BUILD_FOLDER=build/bin
@@ -276,7 +236,7 @@ jobs:
             BUILD_FOLDER=build/bin
             ;;
 
-          vs2019)
+          vs2026)
             MSBuild.exe hl.sln //nologo //m //clp:ErrorsOnly \
               //p:Configuration=${{ matrix.msbuild_configuration }} \
               //p:Platform=${{ matrix.architecture_string }}
@@ -322,7 +282,7 @@ jobs:
             esac
             cd build && ctest --verbose --build-config ${{ matrix.cmake_configuration }}
             ;;
-          vs2019)
+          vs2026)
             ${{ env.WINDOWS_BUILD_FOLDER }}/hl.exe --version
             ;;
           make*)
@@ -395,13 +355,83 @@ jobs:
         name: ${{ matrix.target }}-${{ matrix.build_system }}-${{ matrix.architecture }}
         path: ${{ env.HASHLINK_DISTRIBUTION }}
 
+  ###########################################################
+  build-darwin:
+  ###########################################################
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [darwin]
+        architecture: [64, arm64]
+        build_system: [make, cmake]
+
+        exclude:
+          # no Homebrew bottles on Intel: brew bundle builds from source (~40min), cmake covers x86_64
+          - architecture: 64
+            build_system: make
+
+        include:
+          - target: darwin
+            haxe_nightly_dir: mac
+            archive_ext: tar.gz
+
+          - target: darwin
+            architecture: 64
+            runner: macos-15-intel
+
+          - target: darwin
+            architecture: arm64
+            runner: macos-latest
+
+          - build_system: cmake
+            cmake_configuration: RelWithDebInfo
+
+    steps: *build-steps
+
+  ###########################################################
+  build-windows:
+  ###########################################################
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [windows]
+        architecture: [64]
+        build_system: [cmake, cmake-mingw, cmake-clang-cl, vs2026]
+
+        include:
+          - target: windows
+            runner: windows-2025 # has VS 2026 preinstalled which supports PlatformToolset <= v145, WindowsTargetPlatformVersion 10
+            haxe_nightly_dir: windows64
+            archive_ext: zip
+            ffmpeg_url: https://github.com/HaxeFoundation/hashlink/files/5648056/ffmpeg-3.4.2-win64-dev.zip
+            architecture_string: x64
+
+          - build_system: cmake
+            cmake_configuration: RelWithDebInfo
+            cmake_generator: Visual Studio 18 2026
+
+          - build_system: cmake-mingw
+            cmake_configuration: RelWithDebInfo
+
+          - build_system: cmake-clang-cl
+            cmake_configuration: RelWithDebInfo
+            cmake_generator: Visual Studio 18 2026
+
+          - build_system: vs2026
+            msbuild_configuration: Release
+
+    steps: *build-steps
 
   build-android:
     runs-on: ubuntu-latest
     steps:
 
     - name: "SCM Checkout"
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Install haxe
       uses: krdlab/setup-haxe@v2
@@ -423,53 +453,35 @@ jobs:
           -DANDROID_PLATFORM=24 -DANDROID_ABI=arm64-v8a -DBUILD_SHARED_LIBS=OFF -DWITH_VM=OFF
         cmake --build build
 
-  haxe-test-suite:
-    needs: build
+  ###########################################################
+  haxe-test-linux:
+  ###########################################################
+    needs: build-linux
     strategy:
       fail-fast: false
       matrix:
-        os: [darwin, linux, windows]
-        architecture: [x86_32, x86_64, arm64]
+        os: [linux]
+        architecture: [x86_64, arm64]
         include:
         - architecture: arm64
           test-flags: --skip-hl-jit # not yet supported
 
-        - architecture: x86_32
-          test-flags: --skip-hl-jit --msbuild-platform x86 -D hlgen.build.architecture=x86_32 # not stable
-
         - os: linux
-          runner: ubuntu-latest
+          runner: ubuntu-24.04
+          build_system: make
 
         - os: linux
           architecture: arm64
           runner: ubuntu-24.04-arm
 
-        - os: darwin
-          architecture: x86_64
-          runner: macos-15-intel
-
-        - os: darwin
-          architecture: arm64
-          runner: macos-latest
-
-        - os: windows
-          runner: windows-latest
-
-        exclude:
-        - os: darwin
-          architecture: x86_32
-
-        - os: windows
-          architecture: arm64
-
     runs-on: ${{ matrix.runner }}
-    steps:
-    - uses: actions/checkout@v6
+    steps: &haxe-test-steps
+    - uses: actions/checkout@v7
     - name: Download binary
       uses: actions/download-artifact@v8
       with:
         name: |
-          ${{ matrix.os }}-${{ matrix.os == 'windows' && 'vs2019' || 'make' }}-${{
+          ${{ matrix.os }}-${{ matrix.build_system }}-${{
             matrix.architecture == 'arm64' && 'arm64' ||
             matrix.architecture == 'x86_64' && '64' ||
             matrix.architecture == 'x86_32' && '32'
@@ -487,15 +499,16 @@ jobs:
         fi
         sudo apt-get update -qqy
         sudo apt-get install -qqy libpng16-16t64${SUFFIX} libjpeg-turbo8${SUFFIX} libturbojpeg${SUFFIX} zlib1g${SUFFIX} libogg0${SUFFIX} libvorbis0a${SUFFIX} \
-          libvorbisfile3${SUFFIX} libvorbisenc2${SUFFIX} libsqlite3-0${SUFFIX} ${EXTRA_APT_PKGS}
+          libvorbisfile3${SUFFIX} libvorbisenc2${SUFFIX} libsqlite3-0${SUFFIX} libmbedtls14t64${SUFFIX} ${EXTRA_APT_PKGS}
 
     - name: Install brew packages
-      if: matrix.os == 'darwin'
+      if: matrix.os == 'darwin' && matrix.build_system == 'make'
       run: |
+        brew update
         brew install libpng jpeg-turbo libvorbis sqlite mbedtls
 
     - name: Install msbuild
-      uses: microsoft/setup-msbuild@v2
+      uses: microsoft/setup-msbuild@v3
       if: matrix.os == 'windows'
       with:
         msbuild-architecture: ${{ matrix.architecture == 'x86_64' && 'x64' || 'x86' }}
@@ -517,6 +530,11 @@ jobs:
           sudo cp hl /usr/local/bin/
         fi
         sudo cp libhl.* *.hdll /usr/local/lib/
+        if [[ "${{ matrix.os }}-${{ matrix.build_system }}" == "darwin-cmake" ]]; then
+          # cmake package already bundles shared third-party libs
+          sudo cp *.dylib /usr/local/lib/
+          otool -L *.hdll
+        fi
         sudo cp include/* /usr/local/include/
 
     - name: Install binary (Windows)
@@ -527,18 +545,35 @@ jobs:
 
     - name: Check binary
       run: hl --version
-    - uses: tobil4sk/setup-haxe@9d1527c4bb9d1d449d196a0822118692ceeac457
+
+    - uses: krdlab/setup-haxe@v2
       with:
         haxe-version: latest
 
     - name: Setup haxelib
       run: haxelib dev hashlink ./other/haxelib
 
-    - uses: actions/checkout@v6
+    - name: Get Haxe commit SHA
+      id: haxe_sha
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        version=$(haxe --version)
+        echo "Haxe version: $version"
+        short_sha=${version##*+}
+        full_sha=$(gh api repos/HaxeFoundation/haxe/commits/$short_sha --jq '.sha')
+        echo "Commit SHA: $short_sha, Full SHA: $full_sha"
+        echo "sha=$full_sha" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/checkout@v7
       with:
         repository: HaxeFoundation/haxe
         path: haxe
+        ref: ${{ steps.haxe_sha.outputs.sha }}
+
     - name: Test
+      timeout-minutes: 20
       run: |
         if [[ "${{ matrix.os }}" == "darwin" ]]; then
           echo "" > sys/compile-fs.hxml
@@ -547,20 +582,77 @@ jobs:
       working-directory: haxe/tests
 
   ###########################################################
+  haxe-test-darwin:
+  ###########################################################
+    needs: build-darwin
+    env:
+      HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [darwin]
+        architecture: [x86_64, arm64]
+        include:
+        - architecture: arm64
+          test-flags: --skip-hl-jit # not yet supported
+
+        - os: darwin
+          runner: macos-15-intel
+          build_system: cmake
+
+        - os: darwin
+          architecture: arm64
+          runner: macos-latest
+          build_system: make
+
+    runs-on: ${{ matrix.runner }}
+    steps: *haxe-test-steps
+
+  ###########################################################
+  haxe-test-windows:
+  ###########################################################
+    needs: build-windows
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows]
+        architecture: [x86_64]
+        include:
+        - os: windows
+          runner: windows-2025
+          build_system: vs2026
+
+    runs-on: ${{ matrix.runner }}
+    steps: *haxe-test-steps
+
+  ###########################################################
   publish-latest-release:
   ###########################################################
     runs-on: ubuntu-latest
-    needs: [build, haxe-test-suite]
+    needs: [build-linux, build-darwin, build-windows, haxe-test-linux, haxe-test-darwin, haxe-test-windows]
     if: github.ref == 'refs/heads/master'
     concurrency: publish-latest-release # https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idconcurrency
 
     steps:
 
     - name: "SCM Checkout"
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
+    # not the action's own extraction: its streaming unzip can stop early on a PK\x07\x08 copied
+    # from a CPack zip inside the artifact ("Artifact download failed after 5 retries"),
+    # see also actions/download-artifact#339
     - name: "Get: all build artifacts"
       uses: actions/download-artifact@v8
+      with:
+        path: _artifacts
+        skip-decompress: true
+
+    - name: "Extract build artifacts"
+      run: |
+        set -eu
+        for zip in _artifacts/*/*; do
+          unzip -q "$zip" -d "$(basename "$(dirname "$zip")")"
+        done
 
     - name: "Delete previous 'latest' release"
       env:
@@ -584,9 +676,7 @@ jobs:
           --title "HashLink Nightly Build" \
           "darwin-cmake-64/hashlink-${short_commit}-darwin-cmake.tar.gz#hashlink-latest-darwin.tar.gz" \
           "darwin-cmake-arm64/hashlink-${short_commit}-darwin-arm64-cmake.tar.gz#hashlink-latest-darwin-arm64.tar.gz" \
-          "linux-make-32/hashlink-${short_commit}-linux-i386.tar.gz#hashlink-latest-linux-i386.tar.gz" \
           "linux-make-64/hashlink-${short_commit}-linux-amd64.tar.gz#hashlink-latest-linux-amd64.tar.gz" \
           "linux-make-arm64/hashlink-${short_commit}-linux-arm64.tar.gz#hashlink-latest-linux-arm64.tar.gz" \
-          "windows-vs2019-32/hashlink-${short_commit}-win32.zip#hashlink-latest-win32.zip" \
-          "windows-vs2019-64/hashlink-${short_commit}-win64.zip#hashlink-latest-win64.zip" \
+          "windows-vs2026-64/hashlink-${short_commit}-win64.zip#hashlink-latest-win64.zip" \
           "windows-cmake-mingw-64/hashlink-${short_commit}-win64-cmake-mingw.zip#hashlink-latest-win64-mingw.zip"

@@ -37,6 +37,7 @@ typedef struct {
 	int pos;
 	const char *error;
 	hl_code *code;
+	hl_alloc *alloc;
 } hl_reader;
 
 #undef ERROR
@@ -118,7 +119,7 @@ static hl_type *hl_get_type( hl_reader *r ) {
 		ERROR("Invalid type index");
 		i = 0;
 	}
-	return r->code->types + i;
+	return r->code->types[i];
 }
 
 static const char *hl_read_string( hl_reader *r ) {
@@ -141,6 +142,12 @@ const uchar *hl_get_ustring( hl_code *code, int index ) {
 	return str;
 }
 
+const uchar *hl_function_lname( hl_code *code, hl_function *f ) {
+	if( !code->lnames || f->obj ) return NULL;
+	int k = code->lnames[f - code->functions];
+	return k < 0 ? NULL : hl_get_ustring(code, k);
+}
+
 static const uchar *hl_read_ustring( hl_reader *r ) {
 	int i = INDEX();
 	if( i < 0 || i >= r->code->nstrings ) {
@@ -158,9 +165,9 @@ static void hl_read_type( hl_reader *r, hl_type *t ) {
 		{
 			int i;
 			int nargs = READ();
-			t->fun = (hl_type_fun*)hl_zalloc(&r->code->alloc,sizeof(hl_type_fun));
+			t->fun = (hl_type_fun*)hl_zalloc(r->alloc,sizeof(hl_type_fun));
 			t->fun->nargs = nargs;
-			t->fun->args = (hl_type**)hl_malloc(&r->code->alloc,sizeof(hl_type*)*nargs);
+			t->fun->args = (hl_type**)hl_malloc(r->alloc,sizeof(hl_type*)*nargs);
 			for(i=0;i<nargs;i++)
 				t->fun->args[i] = hl_get_type(r);
 			t->fun->ret = hl_get_type(r);
@@ -176,16 +183,17 @@ static void hl_read_type( hl_reader *r, hl_type *t ) {
 			int nfields = UINDEX();
 			int nproto = UINDEX();
 			int nbindings = UINDEX();
-			t->obj = (hl_type_obj*)hl_malloc(&r->code->alloc,sizeof(hl_type_obj));
+			t->obj = (hl_type_obj*)hl_malloc(r->alloc,sizeof(hl_type_obj));
 			t->obj->name = name;
-			t->obj->super = super < 0 ? NULL : r->code->types + super;
+			if( super >= r->code->ntypes ) ERROR("Invalid type index");
+			t->obj->super = super < 0 || super >= r->code->ntypes ? NULL : r->code->types[super];
 			t->obj->global_value = (void**)(int_val)global;
 			t->obj->nfields = nfields;
 			t->obj->nproto = nproto;
 			t->obj->nbindings = nbindings;
-			t->obj->fields = (hl_obj_field*)hl_malloc(&r->code->alloc,sizeof(hl_obj_field)*nfields);
-			t->obj->proto = (hl_obj_proto*)hl_malloc(&r->code->alloc,sizeof(hl_obj_proto)*nproto);
-			t->obj->bindings = (int*)hl_malloc(&r->code->alloc,sizeof(int)*nbindings*2);
+			t->obj->fields = (hl_obj_field*)hl_malloc(r->alloc,sizeof(hl_obj_field)*nfields);
+			t->obj->proto = (hl_obj_proto*)hl_malloc(r->alloc,sizeof(hl_obj_proto)*nproto);
+			t->obj->bindings = (int*)hl_malloc(r->alloc,sizeof(int)*nbindings*2);
 			t->obj->rt = NULL;
 			t->obj->m = NULL;
 			for(i=0;i<nfields;i++) {
@@ -211,9 +219,9 @@ static void hl_read_type( hl_reader *r, hl_type *t ) {
 		{
 			int i;
 			int nfields = UINDEX();
-			t->virt = (hl_type_virtual*)hl_malloc(&r->code->alloc,sizeof(hl_type_virtual));
+			t->virt = (hl_type_virtual*)hl_malloc(r->alloc,sizeof(hl_type_virtual));
 			t->virt->nfields = nfields;
-			t->virt->fields = (hl_obj_field*)hl_malloc(&r->code->alloc,sizeof(hl_obj_field)*nfields);
+			t->virt->fields = (hl_obj_field*)hl_malloc(r->alloc,sizeof(hl_obj_field)*nfields);
 			for(i=0;i<nfields;i++) {
 				hl_obj_field *f = t->virt->fields + i;
 				f->name = hl_read_ustring(r);
@@ -228,19 +236,27 @@ static void hl_read_type( hl_reader *r, hl_type *t ) {
 	case HENUM:
 		{
 			int i,j;
-			t->tenum = hl_malloc(&r->code->alloc,sizeof(hl_type_enum));
+			t->tenum = hl_malloc(r->alloc,sizeof(hl_type_enum));
 			t->tenum->name = hl_read_ustring(r);
 			t->tenum->global_value = (void**)(int_val)UINDEX();
 			t->tenum->nconstructs = UINDEX();
-			t->tenum->constructs = (hl_enum_construct*)hl_malloc(&r->code->alloc, sizeof(hl_enum_construct)*t->tenum->nconstructs);
+			t->tenum->constructs = (hl_enum_construct*)hl_malloc(r->alloc, sizeof(hl_enum_construct)*t->tenum->nconstructs);
 			for(i=0;i<t->tenum->nconstructs;i++) {
 				hl_enum_construct *c = t->tenum->constructs + i;
 				c->name = hl_read_ustring(r);
 				c->nparams = UINDEX();
-				c->params = (hl_type**)hl_malloc(&r->code->alloc,sizeof(hl_type*)*c->nparams);
-				c->offsets = (int*)hl_malloc(&r->code->alloc,sizeof(int)*c->nparams);
+				c->params = (hl_type**)hl_malloc(r->alloc,sizeof(hl_type*)*c->nparams);
+				c->offsets = (int*)hl_malloc(r->alloc,sizeof(int)*c->nparams);
 				for(j=0;j<c->nparams;j++)
 					c->params[j] = hl_get_type(r);
+				c->pnames = NULL;
+				if( r->code->version >= 7 && c->nparams ) {
+					c->pnames = (const uchar**)hl_malloc(&r->code->alloc,sizeof(uchar*)*c->nparams);
+					for(j=0;j<c->nparams;j++) {
+						int k = UINDEX();
+						c->pnames[j] = k == 0 ? NULL : (k - 1 < r->code->nstrings ? hl_get_ustring(r->code,k - 1) : NULL);
+					}
+				}
 			}
 		}
 		break;
@@ -342,6 +358,10 @@ static void hl_read_function( hl_reader *r, hl_function *f ) {
 	f->ops = (hl_opcode*)hl_malloc(&r->code->falloc, f->nops * sizeof(hl_opcode));
 	for(i=0;i<f->nops;i++)
 		hl_read_opcode(r, f, f->ops+i);
+	if( r->code->version >= 7 ) {
+		int k = UINDEX();
+		r->code->lnames[f - r->code->functions] = k > 0 && k - 1 < r->code->nstrings ? k - 1 : -1;
+	}
 }
 
 #undef CHK_ERROR
@@ -421,6 +441,18 @@ static int *hl_read_debug_infos( hl_reader *r, int nops ) {
 	return debug;
 }
 
+int hl_code_read_header( const unsigned char *data, int size, int *file_size, unsigned char *build_id ) {
+	*file_size = -1;
+	if( size < 4 || data[0] != 'H' || data[1] != 'L' || data[2] != 'B' )
+		return -1;
+	int version = data[3];
+	if( version < 7 ) return version;
+	if( size < HL_HEADER_SIZE ) return -1;
+	*file_size = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
+	memcpy(build_id, data + 8, HL_BUILD_ID_SIZE);
+	return version;
+}
+
 hl_code *hl_code_read( const unsigned char *data, int size, char **error_msg ) {
 	hl_reader _r = { data, size, 0, 0, NULL };
 	hl_reader *r = &_r;
@@ -428,7 +460,7 @@ hl_code *hl_code_read( const unsigned char *data, int size, char **error_msg ) {
 	hl_alloc alloc;
 	int i;
 	int flags;
-	int max_version = 5;
+	int max_version = 7;
 	hl_alloc_init(&alloc);
 	c = hl_zalloc(&alloc,sizeof(hl_code));
 	c->alloc = alloc;
@@ -436,10 +468,18 @@ hl_code *hl_code_read( const unsigned char *data, int size, char **error_msg ) {
 	if( READ() != 'H' || READ() != 'L' || READ() != 'B' )
 		EXIT("Invalid HL bytecode header");
 	r->code = c;
+	r->alloc = &c->alloc;
 	c->version = READ();
 	if( c->version <= 1 || c->version > max_version ) {
 		printf("Found version %d while HL %d.%d supports up to %d\n",c->version,HL_VERSION>>16,(HL_VERSION>>8)&0xFF,max_version);
 		EXIT("Unsupported bytecode version");
+	}
+	if( c->version >= 7 ) {
+		c->file_size = hl_read_i32(r);
+		for(i=0;i<HL_BUILD_ID_SIZE;i++)
+			c->build_id[i] = READ();
+		if( c->file_size != size )
+			EXIT("Truncated bytecode");
 	}
 	flags = UINDEX();
 	c->nints = UINDEX();
@@ -481,9 +521,50 @@ hl_code *hl_code_read( const unsigned char *data, int size, char **error_msg ) {
 		c->debugfiles = hl_read_strings(r, c->ndebugfiles, &c->debugfiles_lens);
 		CHK_ERROR();
 	}
-	ALLOC(c->types, hl_type, c->ntypes);
+	{
+		int types_pos = r->pos;
+		int size = 0;
+		int j;
+		char *data;
+		hl_alloc tmp;
+		hl_alloc_init(&tmp);
+		hl_type *ttypes = (hl_type*)hl_zalloc(&tmp, sizeof(hl_type) * c->ntypes);
+		int *nprotos = (int*)hl_zalloc(&tmp, sizeof(int) * c->ntypes);
+		c->types = (hl_type**)hl_malloc(&tmp, sizeof(hl_type*) * c->ntypes);
+		for(i=0;i<c->ntypes;i++)
+			c->types[i] = ttypes + i;
+		r->alloc = &tmp;
+		for(i=0;i<c->ntypes && !r->error;i++)
+			hl_read_type(r, ttypes + i);
+		r->alloc = &c->alloc;
+		if( r->error ) {
+			hl_free(&tmp);
+			CHK_ERROR();
+		}
+		for(i=0;i<c->ntypes;i++) {
+			hl_type *t = ttypes + i;
+			int depth = 0;
+			while( t && (t->kind == HOBJ || t->kind == HSTRUCT) && depth++ < c->ntypes ) {
+				for(j=0;j<t->obj->nproto;j++)
+					if( t->obj->proto[j].pindex >= nprotos[i] ) nprotos[i] = t->obj->proto[j].pindex + 1;
+				t = t->obj->super;
+			}
+			if( ttypes[i].kind == HOBJ || ttypes[i].kind == HSTRUCT ) nprotos[i] += hl_setup.hot_reload ? HL_HOT_RELOAD_VSLOTS : 0;
+			size += sizeof(hl_type) + nprotos[i] * sizeof(void*);
+		}
+		data = (char*)hl_zalloc(&c->alloc, size);
+		ALLOC(c->types, hl_type*, c->ntypes);
+		ALLOC(c->types_vslots, int, c->ntypes);
+		for(i=0;i<c->ntypes;i++) {
+			c->types_vslots[i] = nprotos[i];
+			c->types[i] = (hl_type*)data;
+			data += sizeof(hl_type) + nprotos[i] * sizeof(void*);
+		}
+		hl_free(&tmp);
+		r->pos = types_pos;
+	}
 	for(i=0;i<c->ntypes;i++) {
-		hl_read_type(r, c->types + i);
+		hl_read_type(r, c->types[i]);
 		CHK_ERROR();
 	}
 	ALLOC(c->globals, hl_type*, c->nglobals);
@@ -500,19 +581,23 @@ hl_code *hl_code_read( const unsigned char *data, int size, char **error_msg ) {
 	}
 	CHK_ERROR();
 	ALLOC(c->functions, hl_function, c->nfunctions);
+	if( c->version >= 7 ) ALLOC(c->lnames, int, c->nfunctions);
 	for(i=0;i<c->nfunctions;i++) {
 		hl_read_function(r,c->functions+i);
 		CHK_ERROR();
 		if( c->hasdebug ) {
 			c->functions[i].debug = hl_read_debug_infos(r,c->functions[i].nops);
 			if( c->version >= 3 ) {
-				// skip assigns (no need here)
 				int nassigns = UINDEX();
+				int *assigns = (int*)malloc(sizeof(int)*nassigns*3);
 				int j;
 				for(j=0;j<nassigns;j++) {
-					UINDEX();
-					INDEX();
+					assigns[j*3] = UINDEX();
+					assigns[j*3+1] = INDEX() - 1;
+					assigns[j*3+2] = c->version >= 6 ? INDEX() - 1 : -1;
 				}
+				c->functions[i].nassigns = nassigns;
+				c->functions[i].assigns = assigns;
 			}
 		}
 	}
@@ -633,6 +718,8 @@ static int hash_type_first( hl_type *t, bool isrec ) {
 			H32(f->hashed_name);
 			HTYPE(f->t);
 		}
+		for(i=0;i<t->obj->nproto;i++)
+			H32(t->obj->proto[i].pindex);
 		break;
 	case HREF:
 	case HNULL:
@@ -655,6 +742,9 @@ static int hash_type_first( hl_type *t, bool isrec ) {
 			HUSTR(c->name);
 			for(k=0;k<c->nparams;k++)
 				HTYPE(c->params[k]);
+			if( c->pnames )
+				for(k=0;k<c->nparams;k++)
+					if( c->pnames[k] ) HUSTR(c->pnames[k]);
 		}
 		break;
 	case HABSTRACT:
@@ -666,8 +756,19 @@ static int hash_type_first( hl_type *t, bool isrec ) {
 	return hash;
 }
 
+int hl_code_type_index( hl_code *c, hl_type *t ) {
+	int min = 0, max = c->ntypes;
+	while( min < max ) {
+		int mid = (min + max) >> 1;
+		hl_type *tm = c->types[mid];
+		if( tm == t ) return mid;
+		if( tm < t ) min = mid + 1; else max = mid;
+	}
+	return -1;
+}
+
 #undef HTYPE
-#define HTYPE(t) H32(h->types_hashes[t - h->code->types])
+#define HTYPE(t) H32(h->types_hashes[hl_code_type_index(h->code,t)])
 
 static int hash_type_rec( hl_code_hash *h, hl_type *t ) {
 	int hash = -1;
@@ -718,16 +819,73 @@ static int hash_native( hl_code_hash *h, hl_native *n ) {
 	return hash;
 }
 
+static int hash_type_sign( hl_type *t, int depth ) {
+	int hash = -1;
+	int i;
+	H(t->kind);
+	if( depth > 4 ) return hash;
+	switch( t->kind ) {
+	case HFUN:
+	case HMETHOD:
+		H(t->fun->nargs);
+		for(i=0;i<t->fun->nargs;i++)
+			H32(hash_type_sign(t->fun->args[i], depth + 1));
+		H32(hash_type_sign(t->fun->ret, depth + 1));
+		break;
+	case HOBJ:
+	case HSTRUCT:
+		HUSTR(t->obj->name);
+		break;
+	case HENUM:
+		HUSTR(t->tenum->name);
+		if( !t->tenum->global_value ) {
+			H32(t->tenum->nconstructs);
+			for(i=0;i<t->tenum->nconstructs;i++) {
+				hl_enum_construct *c = t->tenum->constructs + i;
+				int k;
+				H32(c->nparams);
+				for(k=0;k<c->nparams;k++)
+					H32(hash_type_sign(c->params[k], depth + 1));
+			}
+		}
+		break;
+	case HREF:
+	case HNULL:
+	case HPACKED:
+		H32(hash_type_sign(t->tparam, depth + 1));
+		break;
+	case HVIRTUAL:
+		H32(t->virt->nfields);
+		for(i=0;i<t->virt->nfields;i++) {
+			hl_obj_field *f = t->virt->fields + i;
+			H32(f->hashed_name);
+			H32(hash_type_sign(f->t, depth + 1));
+		}
+		break;
+	case HABSTRACT:
+		HUSTR(t->abs_name);
+		break;
+	default:
+		break;
+	}
+	return hash;
+}
+
 static int hash_fun_sign( hl_code_hash *h, hl_function *f ) {
 	int hash = -1;
-	HTYPE(f->type);
+	H32(hash_type_sign(f->type, 0));
 	if( f->obj ) {
 		HUSTR(f->obj->name);
 		HUSTR(f->field.name);
 	} else if( f->field.ref ) {
 		HUSTR(f->field.ref->obj->name);
 		HUSTR(f->field.ref->field.name);
-		H32(f->ref);
+		const uchar *lname = hl_function_lname(h->code, f);
+		if( lname ) {
+			HUSTR(lname);
+		} else {
+			H32(f->ref);
+		}
 	}
 	return hash;
 }
@@ -758,7 +916,7 @@ static int hash_fun( hl_code_hash *h, hl_function *f ) {
 		//case OBytes:
 		case OType:
 			H32(o->p1);
-			HTYPE(c->types + o->p2);
+			HTYPE(c->types[o->p2]);
 			break;
 		case OCall0:
 			H32(o->p1);
@@ -903,31 +1061,43 @@ hl_code_hash *hl_code_hash_alloc( hl_code *c ) {
 
 	h->types_hashes = malloc(sizeof(int) * c->ntypes);
 	for(i=0;i<c->ntypes;i++)
-		h->types_hashes[i] = hash_type_first(c->types + i, false);
+		h->types_hashes[i] = hash_type_first(c->types[i], false);
 	int *types_hashes = malloc(sizeof(int) * c->ntypes); // use a second buffer for order-indepedent
 	for(i=0;i<c->ntypes;i++)
-		types_hashes[i] = h->types_hashes[i] ^ hash_type_rec(h, c->types + i);
+		types_hashes[i] = h->types_hashes[i] ^ hash_type_rec(h, c->types[i]);
 	free(h->types_hashes);
 	h->types_hashes = types_hashes;
 
 	h->globals_signs = malloc(sizeof(int) * c->nglobals);
+	bool *named = malloc(sizeof(bool) * c->nglobals);
 	for(i=0;i<c->nglobals;i++) {
 		hl_type *t = c->globals[i];
 		h->globals_signs[i] = i | 0x80000000;
+		named[i] = false;
 		if( t->kind == HABSTRACT )
 			h->globals_signs[i] = hl_code_hash_type(h,t); // some global abstracts allocated by compiler
 	}
 	for(i=0;i<c->ntypes;i++) {
-		hl_type *t = c->types + i;
+		hl_type *t = c->types[i];
+		int g;
+		int hash = -1;
 		switch( t->kind ) {
 		case HOBJ:
 		case HSTRUCT:
-			if( t->obj->global_value )
-				h->globals_signs[(int)(int_val)t->obj->global_value - 1] = hl_code_hash_type(h,t);
+			if( !t->obj->global_value ) break;
+			g = (int)(int_val)t->obj->global_value - 1;
+			H(t->kind);
+			HUSTR(t->obj->name);
+			h->globals_signs[g] = hash;
+			named[g] = true;
 			break;
 		case HENUM:
-			if( t->tenum->global_value )
-				h->globals_signs[(int)(int_val)t->tenum->global_value - 1] = hl_code_hash_type(h,t);
+			if( !t->tenum->global_value ) break;
+			g = (int)(int_val)t->tenum->global_value - 1;
+			H(t->kind);
+			HUSTR(t->tenum->name);
+			h->globals_signs[g] = hash;
+			named[g] = true;
 			break;
 		default:
 			break;
@@ -972,45 +1142,27 @@ hl_code_hash *hl_code_hash_alloc( hl_code *c ) {
 	}
 
 	for(i=0;i<c->nglobals;i++)
-		h->globals_signs[i] ^= hl_code_hash_type(h,c->globals[i]);
+		if( !named[i] ) h->globals_signs[i] ^= hl_code_hash_type(h,c->globals[i]);
+	free(named);
 	return h;
 }
 
 
-void hl_code_hash_remap_globals( hl_code_hash *hnew, hl_code_hash *hold ) {
+void hl_code_hash_remap_globals( hl_code_hash *hnew, int *remap, int old_count, hl_type **old_types, int *old_signs ) {
 	hl_code *c = hnew->code;
 	int i;
-	int old_start = 0;
-
 	int count = c->nglobals;
-	int old_count = hold->code->nglobals;
-	int extra =	old_count - count;
-	if( extra < 0 ) extra = 0;
-	int *remap = malloc(sizeof(int) * count);
-
-	for(i=0;i<count;i++) {
-		int k;
-		int h = hnew->globals_signs[i];
-		remap[i] = -1;
-		for(k=old_start;k<old_count;k++) {
-			if( hold->globals_signs[k] == h ) {
-				if( k == old_start ) old_start++;
-				remap[i] = k;
-				break;
-			}
-		}
-	}
+	int new_count = old_count;
 
 	// new globals
 	for(i=0;i<count;i++)
 		if( remap[i] == -1 )
-			remap[i] = old_count + extra++;
+			remap[i] = new_count++;
 
 	hl_type **nglobals;
-	int new_count = old_count + extra;
 	ALLOC(nglobals,hl_type*,new_count);
 	for(i=0;i<new_count;i++)
-		nglobals[i] = i < old_count ? hold->code->globals[i] : &hlt_void;
+		nglobals[i] = i < old_count ? old_types[i] : &hlt_void;
 	for(i=0;i<count;i++)
 		nglobals[remap[i]] = c->globals[i];
 	c->globals = nglobals;
@@ -1025,14 +1177,14 @@ void hl_code_hash_remap_globals( hl_code_hash *hnew, hl_code_hash *hold ) {
 
 	int *nsigns = malloc(sizeof(int) * c->nglobals);
 	for(i=0;i<new_count;i++)
-		nsigns[i] = i < old_count ? hold->globals_signs[i] : -1;
+		nsigns[i] = i < old_count ? old_signs[i] : -1;
 	for(i=0;i<count;i++)
 		nsigns[remap[i]] = hnew->globals_signs[i];
 	free(hnew->globals_signs);
 	hnew->globals_signs = nsigns;
 
 	for(i=0;i<c->ntypes;i++) {
-		hl_type *t = c->types + i;
+		hl_type *t = c->types[i];
 		switch( t->kind ) {
 		case HSTRUCT:
 		case HOBJ:
@@ -1067,8 +1219,6 @@ void hl_code_hash_remap_globals( hl_code_hash *hnew, hl_code_hash *hold ) {
 			}
 		}
 	}
-
-	free(remap);
 }
 
 void hl_code_hash_finalize( hl_code_hash *h ) {

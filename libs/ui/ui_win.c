@@ -139,6 +139,7 @@ HL_PRIM wref *HL_NAME(ui_button_new)( wref *w, const uchar *txt, vclosure *callb
 	wref *ref = alloc_ref(but);
 	w->width -= 80;
 	ref->callb = callb;
+	hl_add_root(&ref->callb);
 	SendMessage(but,WM_SETFONT,(WPARAM)font,TRUE);
 	SetWindowText(but,txt);
 	return ref;
@@ -173,8 +174,25 @@ HL_PRIM void HL_NAME(ui_win_set_enable)( wref *w, bool enable ) {
 	EnableWindow(w->h,enable);
 }
 
+static void release_callb( wref *w ) {
+	if( !w || !w->callb ) return;
+	hl_remove_root(&w->callb);
+	w->callb = NULL;
+}
+
+static BOOL CALLBACK release_child( HWND h, LPARAM param ) {
+	wref *w = (wref*)GetProp(h,PREF);
+	release_callb(w);
+	if( w ) w->h = NULL;
+	return TRUE;
+}
+
 HL_PRIM void HL_NAME(ui_win_destroy)( wref *w ) {
+	if( !w->h ) return;
+	EnumChildWindows(w->h,release_child,0);
+	release_callb(w);
 	DestroyWindow(w->h);
+	w->h = NULL;
 }
 
 HL_PRIM int HL_NAME(ui_loop)( bool blocking ) {
@@ -228,14 +246,14 @@ static void sentinel_loop( vsentinel *s ) {
 				// simulate a call
 #				ifdef HL_64
 				int_val* rsp = (int_val*)regs.Rsp;
+				// ensure the stack is aligned to 16 bytes 
+				rsp = (int_val*)((int_val)rsp & ~15);
 				*--rsp = (int_val)regs.Rip;
-				*--rsp = (int_val)rsp;
 				regs.Rsp = (int_val)rsp;
 				regs.Rip = (int_val)s->callback;
 #				else
 				int_val* esp = (int_val*)regs.Esp;
 				*--esp = (int_val)regs.Eip;
-				*--esp = (int_val)esp;
 				regs.Esp = (int_val)esp;
 				regs.Eip = (int_val)s->callback;
 #				endif
@@ -282,11 +300,14 @@ HL_PRIM void HL_NAME(ui_close_console)() {
 	FreeConsole();
 }
 
+// declared in utils.cpp, because COM objects don't play nicely with pure C code
+bool chooseFolder(const wchar_t* title, const wchar_t* defaultFolder, wchar_t* outBuffer);
 
 HL_PRIM vbyte *HL_NAME(ui_choose_file)( bool forSave, vdynamic *options ) {
 	wref *win = (wref*)hl_dyn_getp(options,hl_hash_utf8("window"), &hlt_abstract);
 	varray *filters = (varray*)hl_dyn_getp(options,hl_hash_utf8("filters"),&hlt_array);
 	wchar_t *fileName = (wchar_t*)hl_dyn_getp(options,hl_hash_utf8("fileName"),&hlt_bytes);
+	bool isFolder = (bool)hl_dyn_geti(options,hl_hash_utf8("isFolder"),&hlt_bool);
 	OPENFILENAME op;
 	wchar_t filterStr[1024];
 	wchar_t outputFile[1024] = {0};
@@ -313,15 +334,23 @@ HL_PRIM vbyte *HL_NAME(ui_choose_file)( bool forSave, vdynamic *options ) {
 	op.lpstrInitialDir = hl_dyn_getp(options,hl_hash_utf8("directory"),&hlt_bytes);
 	op.lpstrTitle = hl_dyn_getp(options,hl_hash_utf8("title"),&hlt_bytes);
 	op.Flags |= OFN_NOCHANGEDIR;
+	// can be called from any thread: the GC must not wait for the dialog
+	bool ok;
+	hl_blocking(true);
 	if( forSave ) {
 		op.Flags |= OFN_OVERWRITEPROMPT;
-		if( !GetSaveFileName(&op) )
-			return NULL;
+		ok = GetSaveFileName(&op);
 	} else {
-		op.Flags |= OFN_CREATEPROMPT;
-		if( !GetOpenFileName(&op) )
-			return NULL;
+		if (!isFolder) {
+			op.Flags |= OFN_CREATEPROMPT;
+			ok = GetOpenFileName(&op);
+		} else {
+			ok = chooseFolder(op.lpstrTitle, op.lpstrInitialDir, outputFile);
+		}
 	}
+	hl_blocking(false);
+	if( !ok )
+		return NULL;
 	return hl_copy_bytes((vbyte*)outputFile, (int)(wcslen(outputFile)+1)*2);
 }
 
@@ -332,34 +361,45 @@ HL_PRIM bool HL_NAME(ui_set_clipboard_text)(char* text) {
 		CloseClipboard();
 		return false;
 	}
-	int len = (int) strlen(text);
-	HGLOBAL g = GlobalAlloc(0, (len + 1) * sizeof(TCHAR));
+	wchar_t* wtext = hl_to_utf16(text);
+	int wlen = (int) wcslen(wtext);
+	HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, (wlen + 1) * sizeof(wchar_t));
 	if (g == NULL) {
 		CloseClipboard();
 		return false;
 	}
-	char* chr = GlobalLock(g);
-	memcpy(chr, text, len);
-	chr[len] = '\0';
+	wchar_t* dst = (wchar_t*) GlobalLock(g);
+	if (dst == NULL) {
+		GlobalFree(g);
+		CloseClipboard();
+		return false;
+	}
+	memcpy(dst, wtext, (wlen + 1) * sizeof(wchar_t));
 	GlobalUnlock(g);
-	HANDLE h = SetClipboardData(CF_TEXT, g);
+	HANDLE h = SetClipboardData(CF_UNICODETEXT, g);
+	if (h == NULL) {
+		GlobalFree(g);
+		CloseClipboard();
+		return false;
+	}
 	CloseClipboard();
-	return h != NULL;
+	return true;
 }
 
 HL_PRIM byte* HL_NAME(ui_get_clipboard_text)() {
 	if (!OpenClipboard(NULL))
 		return NULL;
-	HANDLE d = GetClipboardData(CF_TEXT);
+	HANDLE d = GetClipboardData(CF_UNICODETEXT);
 	if (d == NULL) {
 		CloseClipboard();
 		return NULL;
 	}
-	char* chr = (char*) GlobalLock(d);
-	if (chr == NULL) {
+	wchar_t* wchr = (wchar_t*) GlobalLock(d);
+	if (wchr == NULL) {
 		CloseClipboard();
 		return NULL;
 	}
+	char* chr = hl_to_utf8(wchr);
 	vbyte* b = hl_copy_bytes(chr, (int) strlen(chr) + 1);
 	GlobalUnlock(d);
 	CloseClipboard();
@@ -377,7 +417,7 @@ DEFINE_PRIM(_VOID, ui_winlog_set_text, _WIN _BYTES _BOOL);
 DEFINE_PRIM(_VOID, ui_win_set_text, _WIN _BYTES);
 DEFINE_PRIM(_VOID, ui_win_set_enable, _WIN _BOOL);
 DEFINE_PRIM(_VOID, ui_win_destroy, _WIN);
-DEFINE_PRIM(_I32, ui_loop, _BOOL);
+DEFINE_PRIM(_I32 HL_CALLB, ui_loop, _BOOL);
 DEFINE_PRIM(_VOID, ui_stop_loop, _NO_ARG);
 DEFINE_PRIM(_VOID, ui_close_console, _NO_ARG);
 

@@ -26,6 +26,8 @@
 #	include <sys/wait.h>
 #	include <sys/user.h>
 #	include <signal.h>
+#	include <errno.h>
+#	include <unistd.h> // usleep
 #	define USE_PTRACE
 #endif
 
@@ -85,6 +87,7 @@ HL_API bool hl_debug_stop( int pid ) {
 #	elif defined(MAC_DEBUG)
 	return mdbg_session_detach(pid);
 #	elif defined(USE_PTRACE)
+	kill(pid, SIGTRAP); // DETACH needs ptrace-stop
 	return ptrace(PTRACE_DETACH,pid,0,0) >= 0;
 #	else
 	return false;
@@ -166,6 +169,9 @@ HL_API bool hl_debug_flush( int pid, vbyte *addr, int size ) {
 
 #ifdef MAC_DEBUG
 static int get_reg( int r ) {
+	static const int cpu[] = { REG_RAX, REG_RCX, REG_RDX, REG_RBX, REG_RSP, REG_RBP, REG_RSI, REG_RDI, REG_R8, REG_R9, REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15 };
+	if( r >= 10 && r < 42 && !(r & 1) )
+		return cpu[(r - 10) >> 1];
 	switch( r ) {
 		case 0: return REG_RSP;
 		case 1: return REG_RBP;
@@ -184,10 +190,15 @@ static int get_reg( int r ) {
 #endif
 
 #ifdef USE_PTRACE
+#ifdef HL_64
+static bool is_fp_reg( int r ) {
+	return r >= 11 && r < 42 && (r & 1);
+}
+#endif
+
 static void *get_reg( int r ) {
 		struct user_regs_struct *regs = NULL;
 		struct user *user = NULL;
-		struct user_fpregs_struct *fp = NULL;
 		switch( r ) {
 		case -1: return &user->u_fpstate;
 #		ifdef HL_64
@@ -195,7 +206,21 @@ static void *get_reg( int r ) {
 		case 1: return &regs->rbp;
 		case 2: return &regs->rip;
 		case 10: return &regs->rax;
-		case 11: return (void*)(-((int_val)&fp->xmm_space[0])-1);
+		case 12: return &regs->rcx;
+		case 14: return &regs->rdx;
+		case 16: return &regs->rbx;
+		case 18: return &regs->rsp;
+		case 20: return &regs->rbp;
+		case 22: return &regs->rsi;
+		case 24: return &regs->rdi;
+		case 26: return &regs->r8;
+		case 28: return &regs->r9;
+		case 30: return &regs->r10;
+		case 32: return &regs->r11;
+		case 34: return &regs->r12;
+		case 36: return &regs->r13;
+		case 38: return &regs->r14;
+		case 40: return &regs->r15;
 #		else
 		case 0: return &regs->esp;
 		case 1: return &regs->ebp;
@@ -249,9 +274,21 @@ HL_API int hl_debug_wait( int pid, int *thread, int timeout ) {
 	return mdbg_session_wait(pid, thread, timeout);
 #	elif defined(USE_PTRACE)
 	int status;
-	int ret = waitpid(pid,&status,0);
+	// *** HACK ***
+	// usleep here is needed for a good result.
+	// Without it, waitpid can miss many stop event;
+	// With it, and more we wait, less we miss stop event.
+	usleep(100 * 1000);
+	int ret = waitpid(pid, &status, WNOHANG);
+	if( ret == -1 && errno == ECHILD ) {
+		// the process is gone : report it as an exit instead of an error
+		*thread = pid;
+		return 0;
+	}
 	//printf("WAITPID=%X %X\n",ret,status);
 	*thread = ret;
+	if( ret <= 0 )
+		return -1;
 	if( WIFEXITED(status) )
 		return 0;
 	if( WIFSTOPPED(status) ) {
@@ -259,6 +296,11 @@ HL_API int hl_debug_wait( int pid, int *thread, int timeout ) {
 		//printf(" STOPSIG=%d\n",sig);
 		if( sig == SIGSTOP || sig == SIGTRAP )
 			return 1;
+		if( sig == SIGSEGV )
+			return 3;
+		// other signals such as SIGCHLD, ignore and continue
+		if( ptrace(PTRACE_CONT,pid,0,0) >= 0 )
+			return 4;
 		return 3;
 	}
 	return 4;
@@ -280,71 +322,52 @@ HL_API bool hl_debug_resume( int pid, int thread ) {
 }
 
 #ifdef HL_WIN
-#define DefineGetReg(type,GetFun) \
-	REGDATA *GetFun( type *c, int reg ) { \
-		switch( reg ) { \
-		case 0: return GET_REG(sp); \
-		case 1: return GET_REG(bp); \
-		case 2: return GET_REG(ip); \
-		case 4: return &c->Dr0; \
-		case 5: return &c->Dr1; \
-		case 6: return &c->Dr2; \
-		case 7: return &c->Dr3; \
-		case 8: return &c->Dr6; \
-		case 9: return &c->Dr7; \
-		case 10: return GET_REG(ax); \
-		default: return GET_REG(ax); \
-		} \
+DWORD64 *GetContextReg( CONTEXT *c, int reg ) {
+	switch( reg ) {
+	case 0: return &c->Rsp;
+	case 1: return &c->Rbp;
+	case 2: return &c->Rip;
+	case 4: return &c->Dr0;
+	case 5: return &c->Dr1;
+	case 6: return &c->Dr2;
+	case 7: return &c->Dr3;
+	case 8: return &c->Dr6;
+	case 9: return &c->Dr7;
+	default:
+		if( reg & 1 )
+			return &c->FltSave.XmmRegisters[(reg-10)>>1].Low;
+		return &c->Rax + ((reg - 10) >> 1);
 	}
-
-#define GET_REG(x)	&c->E##x
-#define REGDATA		DWORD
-
-#ifdef HL_64
-DefineGetReg(WOW64_CONTEXT,GetContextReg32);
-#	undef GET_REG
-#	undef REGDATA
-#	define GET_REG(x)	&c->R##x
-#	define REGDATA		DWORD64
-#	endif
-
-DefineGetReg(CONTEXT,GetContextReg);
-
+}
 #endif
 
 HL_API void *hl_debug_read_register( int pid, int thread, int reg, bool is64 ) {
 #	if defined(HL_WIN)
-#	ifdef HL_64
-	if( !is64 ) {
-		WOW64_CONTEXT c;
-		c.ContextFlags = CONTEXT_FULL | CONTEXT_DEBUG_REGISTERS;
-		if( !Wow64GetThreadContext(OpenTID(thread),&c) )
-			return NULL;
-		if( reg == 3 )
-			return (void*)(int_val)c.EFlags;
-		if( reg == 11 )
-			return NULL; // TODO
-		return (void*)(int_val)*GetContextReg32(&c,reg);
-	}
+#	ifndef HL_64
+	return NULL;
 #	else
-	if( is64 ) return NULL;
-#	endif
+	if( !is64 ) return NULL;
 	CONTEXT c;
 	c.ContextFlags = CONTEXT_FULL | CONTEXT_DEBUG_REGISTERS;
 	if( !GetThreadContext(OpenTID(thread),&c) )
 		return NULL;
 	if( reg == 3 )
 		return (void*)(int_val)c.EFlags;
-	if( reg == 11 )
-#ifdef HL_64
-		return (void*)(int_val)c.FltSave.XmmRegisters[0].Low;
-#else
-		return (void*)*(int_val*)&c.ExtendedRegisters[10*16];
-#endif
 	return (void*)*GetContextReg(&c,reg);
+#endif
 #	elif defined(MAC_DEBUG)
+	if( get_reg(reg) < 0 ) return NULL;
 	return mdbg_read_register(pid, thread, get_reg(reg), is64);
 #	elif defined(USE_PTRACE)
+#	ifdef HL_64
+	if( is_fp_reg(reg) ) {
+		struct user_fpregs_struct fp;
+		void *out = NULL;
+		if( ptrace(PTRACE_GETFPREGS,thread,0,&fp) < 0 ) return NULL;
+		memcpy(&out, &fp.xmm_space[((reg - 11) >> 1) * 4], sizeof(void*));
+		return out;
+	}
+#	endif
 	void *r = get_reg(reg);
 	if( ((int_val)r) < 0 ) {
 		// peek FP ptr
@@ -361,41 +384,31 @@ HL_API void *hl_debug_read_register( int pid, int thread, int reg, bool is64 ) {
 
 HL_API bool hl_debug_write_register( int pid, int thread, int reg, void *value, bool is64 ) {
 #	if defined(HL_WIN)
-#	ifdef HL_64
-	if( !is64 ) {
-		WOW64_CONTEXT c;
-		c.ContextFlags = CONTEXT_FULL | CONTEXT_DEBUG_REGISTERS;
-		if( !Wow64GetThreadContext(OpenTID(thread),&c) )
-			return false;
-		if( reg == 3 )
-			c.EFlags = (int)(int_val)value;
-		else if( reg == 11 )
-			return false; // TODO
-		else
-			*GetContextReg32(&c,reg) = (DWORD)(int_val)value;
-		return (bool)Wow64SetThreadContext(OpenTID(thread),&c);
-	}
+#	ifndef HL_64
+	return NULL;
 #	else
-	if( is64 ) return false;
-#	endif
 	CONTEXT c;
 	c.ContextFlags = CONTEXT_FULL | CONTEXT_DEBUG_REGISTERS;
 	if( !GetThreadContext(OpenTID(thread),&c) )
 		return false;
 	if( reg == 3 )
 		c.EFlags = (int)(int_val)value;
-	else if( reg == 11 )
-#		ifdef HL_64
-		c.FltSave.XmmRegisters[0].Low = (int_val)value;
-#		else
-		*(int_val*)&c.ExtendedRegisters[10*16] = (int_val)value;
-#		endif
 	else
-		*GetContextReg(&c,reg) = (REGDATA)value;
+		*GetContextReg(&c,reg) = (DWORD64)value;
 	return (bool)SetThreadContext(OpenTID(thread),&c);
+#	endif
 #	elif defined(MAC_DEBUG)
+	if( get_reg(reg) < 0 ) return false;
 	return mdbg_write_register(pid, thread, get_reg(reg), value, is64);
 #	elif defined(USE_PTRACE)
+#	ifdef HL_64
+	if( is_fp_reg(reg) ) {
+		struct user_fpregs_struct fp;
+		if( ptrace(PTRACE_GETFPREGS,thread,0,&fp) < 0 ) return false;
+		memcpy(&fp.xmm_space[((reg - 11) >> 1) * 4], &value, sizeof(void*));
+		return ptrace(PTRACE_SETFPREGS,thread,0,&fp) >= 0;
+	}
+#	endif
 	return ptrace(PTRACE_POKEUSER,thread,get_reg(reg),value) >= 0;
 #	else
 	return false;

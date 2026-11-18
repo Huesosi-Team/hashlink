@@ -9,8 +9,10 @@
 *.user
 *.n
 Debug
+DebugAll
 Release
-ReleaseVS2013
+ReleaseAll
+ReleaseDX12Agility
 x64
 *.stackdump
 *.hdll
@@ -18,6 +20,7 @@ x64
 /src/_main*
 *.dylib
 *.o
+*.d
 *.a
 *.opendb
 *.VC.db
@@ -26,6 +29,8 @@ x64
 /hl
 /include/sdl
 /include/openal
+/include/aftermath
+/include/streamline
 ReleaseStatic
 /other/benchs/bench.*
 /other/benchs/cpp

@@ -10,7 +10,7 @@ INSTALL_INCLUDE_DIR ?= $(PREFIX)/include
 LIBS = $(addsuffix .hdll,fmt sdl ssl openal ui uv mysql sqlite heaps)
 ARCH ?= $(shell uname -m)
 
-CFLAGS = -Wall -O3 -std=c11 -fvisibility=hidden
+CFLAGS = -Wall -O3 -std=c11 -fvisibility=hidden -MMD -MP
 CPPFLAGS = -I src
 LIBHL_LDFLAGS =
 LIBHL_LDLIBS = -lm -lpthread
@@ -41,7 +41,7 @@ STD = src/std/array.o src/std/buffer.o src/std/bytes.o src/std/cast.o src/std/da
 	src/std/socket.o src/std/string.o src/std/sys.o src/std/types.o src/std/ucs2.o src/std/thread.o src/std/process.o \
 	src/std/track.o
 
-HL_OBJ = src/code.o src/jit.o src/main.o src/module.o src/debugger.o src/profile.o
+HL_OBJ = src/code.o src/jit.o src/jit_emit.o src/jit_regs.o src/jit_x86_64.o src/jit_dump.o src/main.o src/module.o src/reload.o src/debugger.o src/profile.o
 
 FMT_CPPFLAGS = -I include/mikktspace -I include/minimp3
 
@@ -109,14 +109,16 @@ SQLITE = libs/sqlite/sqlite.o
 
 HEAPS = libs/heaps/mikkt.o libs/heaps/meshoptimizer.o libs/heaps/vhacd.o libs/heaps/renderdoc.o
 HEAPS += include/mikktspace/mikktspace.o
-HEAPS += include/meshoptimizer/allocator.o include/meshoptimizer/overdrawoptimizer.o \
-	include/meshoptimizer/vcacheoptimizer.o include/meshoptimizer/clusterizer.o \
-	include/meshoptimizer/quantization.o include/meshoptimizer/vertexcodec.o \
-	include/meshoptimizer/indexcodec.o include/meshoptimizer/simplifier.o \
-	include/meshoptimizer/vertexfilter.o include/meshoptimizer/indexgenerator.o \
-	include/meshoptimizer/spatialorder.o include/meshoptimizer/vfetchanalyzer.o \
-	include/meshoptimizer/stripifier.o include/meshoptimizer/vfetchoptimizer.o \
-	include/meshoptimizer/overdrawanalyzer.o include/meshoptimizer/vcacheanalyzer.o
+HEAPS += include/meshoptimizer/allocator.o include/meshoptimizer/clusterizer.o \
+	include/meshoptimizer/indexanalyzer.o include/meshoptimizer/indexcodec.o \
+	include/meshoptimizer/indexgenerator.o include/meshoptimizer/meshletcodec.o \
+	include/meshoptimizer/meshletutils.o include/meshoptimizer/opacitymap.o \
+	include/meshoptimizer/overdrawoptimizer.o include/meshoptimizer/partition.o \
+	include/meshoptimizer/quantization.o include/meshoptimizer/rasterizer.o \
+	include/meshoptimizer/simplifier.o include/meshoptimizer/spatialorder.o \
+	include/meshoptimizer/stripifier.o include/meshoptimizer/tangentspace.o \
+	include/meshoptimizer/vcacheoptimizer.o include/meshoptimizer/vertexcodec.o \
+	include/meshoptimizer/vertexfilter.o include/meshoptimizer/vfetchoptimizer.o
 HEAPS_CPPFLAGS = -I include/mikktspace -I include/meshoptimizer -I include/vhacd -I include/renderdoc
 
 LIB = ${PCRE} ${RUNTIME} ${STD}
@@ -138,12 +140,12 @@ ifeq ($(MARCH),32)
 CFLAGS += -msse2 -mfpmath=sse
 CC=i686-pc-cygwin-gcc
 BUILD_DIR = Release
-VS_SDL_LIBRARY ?= include/sdl/lib/x86/SDL2.dll
+VS_SDL_LIBRARY ?= include/sdl/lib/x86/SDL3.dll
 VS_OPENAL_LIBRARY ?= include/openal/bin/Win32/soft_oal.dll
 VS_DX_LIBRARY ?= include/dx/bin/x86/dxcompiler.dll include/dx/bin/x86/dxil.dll
 else
 BUILD_DIR = x64/Release
-VS_SDL_LIBRARY ?= include/sdl/lib/x64/SDL2.dll
+VS_SDL_LIBRARY ?= include/sdl/lib/x64/SDL3.dll
 VS_OPENAL_LIBRARY ?= include/openal/bin/Win64/soft_oal.dll
 VS_DX_LIBRARY ?= include/dx/bin/x64/dxcompiler.dll include/dx/bin/x64/dxil.dll
 endif
@@ -165,12 +167,12 @@ LIBEXT=dylib
 BREW_PREFIX := $(shell brew --prefix)
 # prefixes for keg-only packages
 BREW_OPENAL_PREFIX := $(shell brew --prefix openal-soft)
-BREW_SDL_PREFIX := $(shell brew --prefix sdl2)
+BREW_SDL_PREFIX := $(shell brew --prefix sdl3)
 
 CFLAGS += -arch $(ARCH)
 CPPFLAGS += -I include -I $(BREW_PREFIX)/include
 
-SDL_CPPFLAGS = -I $(BREW_SDL_PREFIX)/include/SDL2 -DGL_SILENCE_DEPRECATION
+SDL_CPPFLAGS = -DGL_SILENCE_DEPRECATION
 OPENAL_CPPFLAGS = -I $(BREW_OPENAL_PREFIX)/include -Dopenal_soft
 
 ifdef OSX_SDK
@@ -180,7 +182,7 @@ endif
 
 LDFLAGS += -L$(BREW_PREFIX)/lib
 sdl_LDFLAGS = -L$(BREW_SDL_PREFIX)/lib
-sdl_LDLIBS = -lSDL2 -framework OpenGL
+sdl_LDLIBS = -lSDL3 -framework OpenGL
 openal_LDFLAGS = -L$(BREW_OPENAL_PREFIX)/lib
 openal_LDLIBS = -lopenal
 ssl_LDLIBS += -framework Security -framework CoreFoundation
@@ -217,9 +219,9 @@ else
 fmt_LDFLAGS = -L/opt/libjpeg-turbo/lib64
 endif
 
-SDL_CPPFLAGS = $(shell pkg-config --cflags sdl2)
-sdl_LDFLAGS = $(shell pkg-config --libs-only-L --libs-only-other sdl2)
-sdl_LDLIBS = $(shell pkg-config --libs-only-l sdl2) -lGL
+SDL_CPPFLAGS = $(shell pkg-config --cflags sdl3)
+sdl_LDFLAGS = $(shell pkg-config --libs-only-L --libs-only-other sdl3)
+sdl_LDLIBS = $(shell pkg-config --libs-only-l sdl3) -lGL
 openal_LDLIBS = -lopenal
 RELEASE_NAME = linux
 
@@ -257,11 +259,11 @@ endif
 	cp *.hdll $(INSTALL_LIB_DIR)
 	cp $(LIBHL) $(INSTALL_LIB_DIR)
 	mkdir -p $(INSTALL_INCLUDE_DIR)
-	cp src/hl.h src/hlc.h src/hlc_main.c $(INSTALL_INCLUDE_DIR)
+	cp src/hl.h src/hl_ffi.h src/hlc.h src/hlc_main.c $(INSTALL_INCLUDE_DIR)
 
 uninstall:
 	rm -f $(INSTALL_BIN_DIR)/$(HL) $(INSTALL_LIB_DIR)/$(LIBHL) $(INSTALL_LIB_DIR)/*.hdll
-	rm -f $(INSTALL_INCLUDE_DIR)/hl.h $(INSTALL_INCLUDE_DIR)/hlc.h $(INSTALL_INCLUDE_DIR)/hlc_main.c
+	rm -f $(INSTALL_INCLUDE_DIR)/hl.h $(INSTALL_INCLUDE_DIR)/hl_ffi.h $(INSTALL_INCLUDE_DIR)/hlc.h $(INSTALL_INCLUDE_DIR)/hlc_main.c
 
 libs: $(LIBS)
 
@@ -280,7 +282,7 @@ $(HL) $(HLC):
 	$(HDLL_LINK) $(USE_LIBHL_LDFLAGS) $(HDLL_LDFLAGS) $($*_LDFLAGS) -shared $^ $($*_LDLIBS) -o $@
 
 $(FMT): CPPFLAGS += $(FMT_CPPFLAGS)
-fmt_LDLIBS = -lpng -lturbojpeg -lvorbisfile -lz -lm
+fmt_LDLIBS = -lz -lpng -lturbojpeg -lvorbisfile -lm
 fmt.hdll: $(FMT) $(LIBHL)
 
 $(SDL): CPPFLAGS += $(SDL_CPPFLAGS)
@@ -309,6 +311,7 @@ sqlite.hdll: $(SQLITE) $(LIBHL)
 CXXFLAGS:=$(filter-out -std=c11,$(CFLAGS)) -std=c++11
 
 $(HEAPS): CPPFLAGS += $(HEAPS_CPPFLAGS)
+heaps_LDLIBS = -ldl
 heaps.hdll: HDLL_LINK = $(CXX) $(LDFLAGS)
 heaps.hdll: $(HEAPS) $(LIBHL)
 
@@ -350,7 +353,7 @@ release_prepare:
 	rm -rf $(PACKAGE_NAME)
 	mkdir $(PACKAGE_NAME)
 	mkdir $(PACKAGE_NAME)/include
-	cp src/hl.h src/hlc.h src/hlc_main.c $(PACKAGE_NAME)/include
+	cp src/hl.h src/hl_ffi.h src/hlc.h src/hlc_main.c $(PACKAGE_NAME)/include
 
 release_win:
 	cp $(BUILD_DIR)/{$(HL),libhl.dll,*.hdll,*.lib} $(PACKAGE_NAME)
@@ -385,10 +388,15 @@ codesign_osx:
 .SUFFIXES:
 .SUFFIXES: .cpp .c .o
 
+ALL_OBJS = ${STD} ${BOOT} ${RUNTIME} ${PCRE} ${HL_OBJ} ${FMT} ${SDL} ${SSL} ${OPENAL} ${UI} ${UV} ${MYSQL} ${SQLITE} ${HEAPS} ${HL_DEBUG}
+DEPS = $(ALL_OBJS:.o=.d)
+
 clean_o:
-	rm -f ${STD} ${BOOT} ${RUNTIME} ${PCRE} ${HL_OBJ} ${FMT} ${SDL} ${SSL} ${OPENAL} ${UI} ${UV} ${MYSQL} ${SQLITE} ${HEAPS} ${HL_DEBUG}
+	rm -f ${ALL_OBJS} ${DEPS}
 
 clean: clean_o
 	rm -f $(HL) $(HLC) $(LIBHL) *.hdll
 
 .PHONY: libs release
+
+-include $(DEPS)

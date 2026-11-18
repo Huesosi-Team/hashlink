@@ -86,11 +86,11 @@ HL_PRIM dx_driver *HL_NAME(create)( HWND window, int format, int flags, int rest
 	desc.BufferDesc.Format = (DXGI_FORMAT)format;
 	desc.SampleDesc.Count = 1; // NO AA for now
 	desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	desc.BufferCount = 2;
 #ifdef HL_WIN_DESKTOP
-	desc.BufferCount = 1;
+	desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	desc.Windowed = true;
 #else
-	desc.BufferCount = 2;
 	desc.Windowed = false;
 #endif
 	desc.OutputWindow = window;
@@ -141,7 +141,7 @@ HL_PRIM dx_resource *HL_NAME(get_back_buffer)() {
 
 HL_PRIM bool HL_NAME(resize)(int width, int height, int format) {
 #ifdef HL_WIN_DESKTOP
-	HRESULT res = driver->swapchain->ResizeBuffers(1, width, height, (DXGI_FORMAT)format, 0); assert(res == S_OK);
+	HRESULT res = driver->swapchain->ResizeBuffers(2, width, height, (DXGI_FORMAT)format, 0); assert(res == S_OK);
 	return res == S_OK;
 #else
 	return TRUE; //Should not be called if the window is not resized (in the case here it will never happen)
@@ -357,13 +357,13 @@ HL_PRIM dx_pointer *HL_NAME(create_input_layout)( varray *arr, vbyte *bytecode, 
 	return input;
 }
 
-HL_PRIM dx_pointer *HL_NAME(create_depth_stencil_view)( dx_resource *tex, int format, bool readOnly ) {
+HL_PRIM dx_pointer *HL_NAME(create_depth_stencil_view)( dx_resource *tex, int format, int flags ) {
 	ID3D11DepthStencilView *view;
 	D3D11_DEPTH_STENCIL_VIEW_DESC desc;
 	ZeroMemory(&desc, sizeof(desc));
 	desc.Format = (DXGI_FORMAT)format;
 	desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-	desc.Flags = readOnly ? D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL : 0;
+	desc.Flags = flags;
 	DXERR( driver->device->CreateDepthStencilView(tex,&desc,&view) );
 	return view;
 }
@@ -487,7 +487,7 @@ DEFINE_PRIM(_VOID, ia_set_primitive_topology, _I32);
 DEFINE_PRIM(_VOID, ia_set_input_layout, _POINTER);
 DEFINE_PRIM(_POINTER, create_input_layout, _ARR _BYTES _I32);
 DEFINE_PRIM(_RESOURCE, create_texture_2d, _DYN _BYTES);
-DEFINE_PRIM(_POINTER, create_depth_stencil_view, _RESOURCE _I32 _BOOL);
+DEFINE_PRIM(_POINTER, create_depth_stencil_view, _RESOURCE _I32 _I32);
 DEFINE_PRIM(_POINTER, create_depth_stencil_state, _DYN);
 DEFINE_PRIM(_VOID, om_set_depth_stencil_state, _POINTER _I32);
 DEFINE_PRIM(_VOID, clear_depth_stencil_view, _POINTER _NULL(_F64) _NULL(_I32));

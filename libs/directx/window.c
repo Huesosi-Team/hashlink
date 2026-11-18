@@ -1,6 +1,7 @@
 #define HL_NAME(n) directx_##n
 #include <hl.h>
 #include "hlsystem.h"
+#include "shellscalingapi.h"
 
 #define MAX_EVENTS 1024
 
@@ -39,7 +40,8 @@ typedef enum {
 
 typedef enum {
 	Hidden    = 0x000001,
-	Resizable = 0x000002
+	Resizable = 0x000002,
+	NoActivate = 0x000004
 } WindowFlags;
 
 typedef struct {
@@ -72,6 +74,9 @@ typedef struct {
 	int next_event;
 	bool is_over;
 	bool is_focused;
+	bool fullscreen;
+	RECT fullscreen_rect;
+	WCHAR fullscreen_device[CCHDEVICENAME];
 } dx_events;
 
 typedef struct HWND__ dx_window;
@@ -93,14 +98,72 @@ static bool capture_mouse = false;
 static bool relative_mouse = false;
 
 typedef HCURSOR dx_cursor;
+typedef HICON dx_icon;
+
+#define TICON _ABSTRACT(dx_icon)
 
 static dx_cursor cur_cursor = NULL;
 static bool show_cursor = true;
+
+/** Default icon to use when creating a window. **/
+static dx_icon default_icon = NULL;
 
 #define CURSOR_VISIBLE show_cursor && !relative_mouse
 
 static dx_events *get_events(HWND wnd) {
 	return (dx_events*)GetWindowLongPtr(wnd,GWLP_USERDATA);
+}
+
+#ifndef WM_DPICHANGED
+#	define WM_DPICHANGED 0x02E0
+#endif
+
+typedef struct {
+	const WCHAR *name;
+	HMONITOR result;
+} find_monitor_data;
+
+static BOOL CALLBACK on_find_monitor( HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM param ) {
+	find_monitor_data *d = (find_monitor_data*)param;
+	MONITORINFOEXW info;
+	info.cbSize = sizeof(info);
+	if( GetMonitorInfoW(monitor,(LPMONITORINFO)&info) && wcscmp(info.szDevice,d->name) == 0 ) {
+		d->result = monitor;
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static bool get_fullscreen_rect( HWND wnd, RECT *out ) {
+	dx_events *buf = get_events(wnd);
+	HMONITOR mon = NULL;
+	MONITORINFO mi;
+	if( buf != NULL && buf->fullscreen_device[0] ) {
+		find_monitor_data d;
+		d.name = buf->fullscreen_device;
+		d.result = NULL;
+		EnumDisplayMonitors(NULL,NULL,on_find_monitor,(LPARAM)&d);
+		mon = d.result;
+	}
+	if( mon == NULL )
+		mon = MonitorFromWindow(wnd,MONITOR_DEFAULTTOPRIMARY);
+	mi.cbSize = sizeof(mi);
+	// never fall back on the zeroed rect : that would move the window to 0,0 and size it 0x0
+	if( !GetMonitorInfo(mon,&mi) || IsRectEmpty(&mi.rcMonitor) )
+		return false;
+	*out = mi.rcMonitor;
+	return true;
+}
+
+static void apply_fullscreen_rect( HWND wnd, bool force ) {
+	dx_events *buf = get_events(wnd);
+	RECT r, cur;
+	if( buf == NULL || !buf->fullscreen || !get_fullscreen_rect(wnd,&r) )
+		return;
+	buf->fullscreen_rect = r;
+	if( !force && GetWindowRect(wnd,&cur) && EqualRect(&cur,&r) )
+		return;
+	SetWindowPos(wnd,NULL,r.left,r.top,r.right - r.left,r.bottom - r.top,SWP_NOOWNERZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED|SWP_SHOWWINDOW);
 }
 
 static void updateClipCursor(HWND wnd) {
@@ -398,6 +461,28 @@ static LRESULT CALLBACK WndProc( HWND wnd, UINT umsg, WPARAM wparam, LPARAM lpar
 		get_events(wnd)->is_focused = false;
 		addState(Blur);
 		break;
+	case WM_WINDOWPOSCHANGING:
+	{
+		// While fullscreen, veto any move/resize we didn't ask for. 
+		dx_events *buf = get_events(wnd);
+		WINDOWPOS *wp = (WINDOWPOS*)lparam;
+		if( buf != NULL && buf->fullscreen && !IsRectEmpty(&buf->fullscreen_rect) ) {
+			// let minimize through, else alt-tab would be broken
+			bool minimizing = (wp->flags & SWP_HIDEWINDOW) != 0 || wp->x <= -30000 || wp->y <= -30000;
+			if( !minimizing && !IsIconic(wnd) ) {
+				wp->x = buf->fullscreen_rect.left;
+				wp->y = buf->fullscreen_rect.top;
+				wp->cx = buf->fullscreen_rect.right - buf->fullscreen_rect.left;
+				wp->cy = buf->fullscreen_rect.bottom - buf->fullscreen_rect.top;
+				wp->flags &= ~(SWP_NOMOVE | SWP_NOSIZE);
+			}
+		}
+		break;
+	}
+	case WM_DISPLAYCHANGE:
+	case WM_DPICHANGED:
+		apply_fullscreen_rect(wnd,true);
+		break;
 	case WM_WINDOWPOSCHANGED:
 	{
 		HWND wndFg = GetForegroundWindow();
@@ -532,13 +617,19 @@ HL_PRIM dx_window *HL_NAME(win_create_ex)( int x, int y, int width, int height, 
 		WNDCLASSEX wc;
 		wchar_t fileName[1024];
 		GetModuleFileName(hinst,fileName,1024);
+
+		dx_icon win_icon = default_icon;
+		if (win_icon == NULL) {
+			win_icon = ExtractIcon(hinst, fileName, 0);
+		}
+
 		wc.style         = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 		wc.lpfnWndProc   = WndProc;
 		wc.cbClsExtra    = 0;
 		wc.cbWndExtra    = 0;
 		wc.hInstance     = hinst;
-		wc.hIcon         = ExtractIcon(hinst, fileName, 0);
-		wc.hIconSm       = wc.hIcon;
+		wc.hIcon         = win_icon;
+		wc.hIconSm       = win_icon;
 		wc.hCursor       = NULL;
 		wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
 		wc.lpszMenuName  = NULL;
@@ -563,8 +654,10 @@ HL_PRIM dx_window *HL_NAME(win_create_ex)( int x, int y, int width, int height, 
 	dx_window *win = CreateWindowEx(WS_EX_APPWINDOW, USTR("HL_WIN"), USTR(""), style, x, y, r.right - r.left, r.bottom - r.top, NULL, NULL, hinst, event_buffer);
 	SetTimer(win,0,10,NULL);
 	if( !(windowFlags & Hidden) ) {
-		ShowWindow(win, SW_SHOW);
+		ShowWindow(win, (windowFlags & NoActivate) ? SW_SHOWNOACTIVATE : SW_SHOW);
 	}
+	if( windowFlags & NoActivate )
+		return win;
 	SetForegroundWindow(win);
 	SetFocus(win);
 	return win;
@@ -585,7 +678,7 @@ HL_PRIM void HL_NAME(win_set_size)(dx_window *win, int width, int height) {
 	r.right = width;
 	r.bottom = height;
 	AdjustWindowRectEx(&r,GetWindowLong(win,GWL_STYLE),GetMenu(win) != NULL,GetWindowLong(win,GWL_EXSTYLE));
-	SetWindowPos(win,NULL,0,0,r.right - r.left,r.bottom - r.top,SWP_NOMOVE|SWP_NOOWNERZORDER);
+	SetWindowPos(win,NULL,0,0,r.right - r.left,r.bottom - r.top,SWP_NOMOVE|SWP_NOOWNERZORDER|SWP_NOACTIVATE);
 }
 
 HL_PRIM void HL_NAME(win_get_size)(dx_window *win, int *width, int *height) {
@@ -650,6 +743,17 @@ HL_PRIM void HL_NAME(win_get_max_size)(dx_window *win, int *width, int *height) 
 	if( height ) *height = buf->max_height;
 }
 
+HL_PRIM double HL_NAME(win_get_scale_factor_for_window)(dx_window *win) {
+	HMONITOR handle = MonitorFromWindow(win, MONITOR_DEFAULTTOPRIMARY);
+	int dpi = 96;
+	UINT dpiX, dpiY;
+	if (GetDpiForMonitor(handle, MDT_EFFECTIVE_DPI, &dpiX, &dpiY) == S_OK) {
+        dpi = (int)dpiY;
+	}
+
+	return dpi / 96.0;
+}
+
 HL_PRIM void HL_NAME(win_get_position)(dx_window *win, int *x, int *y) {
 	RECT r;
 	GetWindowRect(win,&r);
@@ -658,7 +762,7 @@ HL_PRIM void HL_NAME(win_get_position)(dx_window *win, int *x, int *y) {
 }
 
 HL_PRIM void HL_NAME(win_set_position)(dx_window *win, int x, int y) {
-	SetWindowPos(win,NULL,x,y,0,0,SWP_NOSIZE|SWP_NOZORDER);
+	SetWindowPos(win,NULL,x,y,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
 }
 
 // initially written with the intent to center on closest monitor; however, SDL centers to primary, so both options are provided
@@ -717,17 +821,43 @@ HL_PRIM void HL_NAME(win_set_focus)(dx_window* win) {
 	SetFocus(win);
 }
 
-HL_PRIM void HL_NAME(win_set_fullscreen)(dx_window *win, bool fs) {
+HL_PRIM void HL_NAME(win_set_fullscreen_on)(dx_window *win, bool fs, vbyte *monitor) {
+	dx_events *buf = get_events(win);
+	if( buf == NULL )
+		return;
 	if( fs ) {
-		MONITORINFO mi = { sizeof(mi) };
-		GetMonitorInfo(MonitorFromWindow(win,MONITOR_DEFAULTTOPRIMARY), &mi);
-		SetWindowLong(win,GWL_STYLE,WS_POPUP | WS_VISIBLE);
-		SetWindowPos(win,NULL,mi.rcMonitor.left,mi.rcMonitor.top,mi.rcMonitor.right - mi.rcMonitor.left,mi.rcMonitor.bottom - mi.rcMonitor.top,SWP_NOOWNERZORDER|SWP_FRAMECHANGED|SWP_SHOWWINDOW);
+		if( IsIconic(win) || IsZoomed(win) )
+			ShowWindow(win,SW_RESTORE);
+		buf->fullscreen_device[0] = 0;
+		if( monitor != NULL ) {
+			const WCHAR *name = (const WCHAR*)monitor;
+			int i = 0;
+			while( i < CCHDEVICENAME - 1 && name[i] ) {
+				buf->fullscreen_device[i] = name[i];
+				i++;
+			}
+			buf->fullscreen_device[i] = 0;
+		} else {
+			MONITORINFOEXW info;
+			info.cbSize = sizeof(info);
+			if( GetMonitorInfoW(MonitorFromWindow(win,MONITOR_DEFAULTTOPRIMARY),(LPMONITORINFO)&info) )
+				memcpy(buf->fullscreen_device,info.szDevice,sizeof(info.szDevice));
+		}
+		buf->fullscreen = true;
+		SetRectEmpty(&buf->fullscreen_rect);
+		SetWindowLong(win,GWL_STYLE,(buf->normal_style & (WS_CLIPSIBLINGS|WS_CLIPCHILDREN)) | WS_POPUP | WS_VISIBLE);
+		apply_fullscreen_rect(win,true);
 	} else {
-		dx_events *buf = get_events(win);
+		buf->fullscreen = false;
+		SetRectEmpty(&buf->fullscreen_rect);
+		buf->fullscreen_device[0] = 0;
 		SetWindowLong(win,GWL_STYLE,buf->normal_style);
-		SetWindowPos(win,NULL,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOOWNERZORDER|SWP_FRAMECHANGED|SWP_SHOWWINDOW);
+		SetWindowPos(win,NULL,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOOWNERZORDER|SWP_FRAMECHANGED|SWP_SHOWWINDOW|SWP_NOACTIVATE);
 	}
+}
+
+HL_PRIM void HL_NAME(win_set_fullscreen)(dx_window *win, bool fs) {
+	HL_NAME(win_set_fullscreen_on)(win,fs,NULL);
 }
 
 HL_PRIM double HL_NAME(win_get_opacity)(dx_window *win) {
@@ -828,6 +958,14 @@ HL_PRIM bool HL_NAME(win_get_relative_mouse_mode)() {
 	return relative_mouse;
 }
 
+HL_PRIM void HL_NAME(win_set_capture)(dx_window *win) {
+	SetCapture(win);
+}
+
+HL_PRIM void HL_NAME(win_release_capture)() {
+	ReleaseCapture();
+}
+
 HL_PRIM void HL_NAME(win_set_drag_accept_files)( dx_window* wnd, bool enabled ) {
 	DragAcceptFiles(wnd, enabled);
 }
@@ -838,6 +976,27 @@ HL_PRIM int HL_NAME(get_screen_width)() {
 
 HL_PRIM int HL_NAME(get_screen_height)() {
 	return GetSystemMetrics(SM_CYSCREEN);
+}
+
+HL_PRIM void HL_NAME(win_set_dark_mode)( dx_window* wnd, bool enabled ) {
+	// Load dynamically the required function and fail silently if they are not available
+	// (which could be true for older Windows 10 versions and before)
+	HMODULE dwmapi = LoadLibraryA("Dwmapi.dll");
+
+	if (dwmapi == NULL)
+		return;
+
+	typedef HRESULT(*DwmSetWindowAttributePTR)(HWND, DWORD, LPCVOID, DWORD);
+	DwmSetWindowAttributePTR DwmSetWindowAttribute =
+		(DwmSetWindowAttributePTR)GetProcAddress(dwmapi, "DwmSetWindowAttribute");
+
+	if (DwmSetWindowAttribute != NULL) {
+		int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+		BOOL dark_mode = enabled;
+		DwmSetWindowAttribute(wnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark_mode, sizeof(dark_mode));
+	}
+
+	FreeLibrary(dwmapi);
 }
 
 typedef struct {
@@ -861,6 +1020,19 @@ BOOL CALLBACK on_get_monitors(HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM par
 	hl_dyn_setp(dynobj, hl_hash_utf8("name"), &hlt_bytes, hl_copy_bytes((vbyte*)info.szDevice, (int)(wcslen(info.szDevice)+1)*2));
 	hl_aptr(arr, vdynobj*)[data->idx++] = (vdynobj*)dynobj;
 	return TRUE;
+}
+
+HL_PRIM void HL_NAME(win_set_zoomed)(HWND wnd, bool zoomed) {
+	if (zoomed) {
+		ShowWindow(wnd, SW_MAXIMIZE);
+	}
+	else {
+		ShowWindow(wnd, SW_RESTORE);
+	}
+}
+
+HL_PRIM bool HL_NAME(win_is_zoomed)(HWND wnd) {
+	return IsZoomed(wnd);
 }
 
 HL_PRIM varray* HL_NAME(win_get_monitors)() {
@@ -929,10 +1101,20 @@ HL_PRIM int HL_NAME(win_change_display_setting)(wchar_t* device, vdynamic* ds) {
 	return ChangeDisplaySettingsExW(device, found ? &devMode : NULL, NULL, found ? CDS_FULLSCREEN : 0, NULL);
 }
 
+HL_PRIM void HL_NAME(win_set_icon)(HWND wnd, dx_icon icon) {
+	SendMessage(wnd, WM_SETICON, ICON_SMALL, (LPARAM)icon);
+	SendMessage(wnd, WM_SETICON, ICON_BIG, (LPARAM)icon);
+}
+
+HL_PRIM void HL_NAME(win_set_default_icon)(dx_icon icon) {
+	default_icon = icon;
+};
+
 #define TWIN _ABSTRACT(dx_window)
 DEFINE_PRIM(TWIN, win_create_ex, _I32 _I32 _I32 _I32 _I32);
 DEFINE_PRIM(TWIN, win_create, _I32 _I32);
 DEFINE_PRIM(_VOID, win_set_fullscreen, TWIN _BOOL);
+DEFINE_PRIM(_VOID, win_set_fullscreen_on, TWIN _BOOL _BYTES);
 DEFINE_PRIM(_VOID, win_resize, TWIN _I32);
 DEFINE_PRIM(_VOID, win_set_focus, TWIN);
 DEFINE_PRIM(_VOID, win_set_title, TWIN _BYTES);
@@ -954,12 +1136,20 @@ DEFINE_PRIM(_BOOL, set_cursor_pos, _I32 _I32);
 DEFINE_PRIM(_BOOL, win_set_cursor_pos, TWIN _I32 _I32);
 DEFINE_PRIM(_BOOL, win_set_relative_mouse_mode, TWIN _BOOL);
 DEFINE_PRIM(_BOOL, win_get_relative_mouse_mode, _NO_ARG);
+DEFINE_PRIM(_VOID, win_set_capture, TWIN);
+DEFINE_PRIM(_VOID, win_release_capture, _NO_ARG);
 DEFINE_PRIM(_VOID, win_set_drag_accept_files, TWIN _BOOL);
 DEFINE_PRIM(_ARR, win_get_display_settings, _BYTES);
 DEFINE_PRIM(_DYN, win_get_current_display_setting, _BYTES _BOOL);
 DEFINE_PRIM(_I32, win_change_display_setting, _BYTES _DYN);
+DEFINE_PRIM(_VOID, win_set_zoomed, TWIN _BOOL);
+DEFINE_PRIM(_BOOL, win_is_zoomed, TWIN);
 DEFINE_PRIM(_ARR, win_get_monitors, _NO_ARG);
 DEFINE_PRIM(_BYTES, win_get_monitor_from_window, TWIN);
+DEFINE_PRIM(_VOID, win_set_icon, TWIN TICON);
+DEFINE_PRIM(_VOID, win_set_default_icon, TICON);
+DEFINE_PRIM(_VOID, win_set_dark_mode, TWIN _BOOL);
+DEFINE_PRIM(_F64, win_get_scale_factor_for_window, TWIN);
 
 DEFINE_PRIM(_I32, get_screen_width, _NO_ARG);
 DEFINE_PRIM(_I32, get_screen_height, _NO_ARG);
@@ -968,17 +1158,17 @@ HL_PRIM dx_cursor HL_NAME(load_cursor)( int res ) {
 	return LoadCursor(NULL,MAKEINTRESOURCE(res));
 }
 
-HL_PRIM dx_cursor HL_NAME(create_cursor)( int width, int height, vbyte *data, int hotX, int hotY ) {
+static HICON create_icon_internal(int width, int height, vbyte* data, bool icon, int hotX, int hotY) {
 	int pad = sizeof(void*) << 3;
 	HICON hicon;
 	HDC hdc = GetDC(NULL);
 	BITMAPV4HEADER bmh;
-	void *pixels;
-	void *maskbits;
+	void* pixels;
+	void* maskbits;
 	int maskbitslen;
 	ICONINFO ii;
 
-	ZeroMemory(&bmh,sizeof(bmh));
+	ZeroMemory(&bmh, sizeof(bmh));
 	bmh.bV4Size = sizeof(bmh);
 	bmh.bV4Width = width;
 	bmh.bV4Height = -height;
@@ -986,18 +1176,18 @@ HL_PRIM dx_cursor HL_NAME(create_cursor)( int width, int height, vbyte *data, in
 	bmh.bV4BitCount = 32;
 	bmh.bV4V4Compression = BI_BITFIELDS;
 	bmh.bV4AlphaMask = 0xFF000000;
-	bmh.bV4RedMask   = 0x00FF0000;
+	bmh.bV4RedMask = 0x00FF0000;
 	bmh.bV4GreenMask = 0x0000FF00;
-	bmh.bV4BlueMask  = 0x000000FF;
+	bmh.bV4BlueMask = 0x000000FF;
 
-	maskbitslen = ((width + (-width)%pad) >> 3) * height;
+	maskbitslen = ((width + (-width) % pad) >> 3) * height;
 	maskbits = malloc(maskbitslen);
-	if( maskbits == NULL )
+	if (maskbits == NULL)
 		return NULL;
-	memset(maskbits,0xFF,maskbitslen);
+	memset(maskbits, 0xFF, maskbitslen);
 
-	memset(&ii,0,sizeof(ii));
-	ii.fIcon = FALSE;
+	memset(&ii, 0, sizeof(ii));
+	ii.fIcon = icon;
 	ii.xHotspot = (DWORD)hotX;
 	ii.yHotspot = (DWORD)hotY;
 	ii.hbmColor = CreateDIBSection(hdc, (BITMAPINFO*)&bmh, DIB_RGB_COLORS, &pixels, NULL, 0);
@@ -1013,8 +1203,32 @@ HL_PRIM dx_cursor HL_NAME(create_cursor)( int width, int height, vbyte *data, in
 	return hicon;
 }
 
+
+HL_PRIM dx_cursor HL_NAME(create_cursor)( int width, int height, vbyte *data, int hotX, int hotY ) {
+	return create_icon_internal(width, height, data, false, hotX, hotY);
+}
+
+HL_PRIM dx_icon HL_NAME(create_icon)(int width, int height, vbyte* data) {
+	return create_icon_internal(width, height, data, true, 0, 0);
+}
+
+HL_PRIM dx_icon HL_NAME(load_icon)(wchar_t* path, int width, int height) {
+	UINT flags = LR_DEFAULTCOLOR | LR_LOADFROMFILE;
+	if (width == -1 && height == -1) {
+		width = 0;
+		height = 0;
+		flags |= LR_DEFAULTSIZE;
+	}
+	dx_icon image = LoadImage(NULL, path, IMAGE_ICON, width, height, flags);
+	return image;
+}
+
 HL_PRIM void HL_NAME(destroy_cursor)( dx_cursor c ) {
 	DestroyIcon(c);
+}
+
+HL_PRIM void HL_NAME(destroy_icon)(dx_icon i) {
+	DestroyIcon(i);
 }
 
 HL_PRIM void HL_NAME(set_cursor)( dx_cursor c ) {
@@ -1035,7 +1249,10 @@ HL_PRIM bool HL_NAME(is_cursor_visible)() {
 #define TCURSOR _ABSTRACT(dx_cursor)
 DEFINE_PRIM(TCURSOR, load_cursor, _I32);
 DEFINE_PRIM(TCURSOR, create_cursor, _I32 _I32 _BYTES _I32 _I32);
+DEFINE_PRIM(TICON, create_icon, _I32 _I32 _BYTES);
+DEFINE_PRIM(TICON, load_icon, _BYTES _I32 _I32);
 DEFINE_PRIM(_VOID, destroy_cursor, TCURSOR);
+DEFINE_PRIM(_VOID, destroy_icon, TICON);
 DEFINE_PRIM(_VOID, set_cursor, TCURSOR);
 DEFINE_PRIM(_VOID, show_cursor, _BOOL);
 DEFINE_PRIM(_BOOL, is_cursor_visible, _NO_ARG);

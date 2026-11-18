@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
-set(HL_VERSION_MAJOR 1)
-set(HL_VERSION_MINOR 16)
+set(HL_VERSION_MAJOR 2)
+set(HL_VERSION_MINOR 0)
 set(HL_VERSION_PATCH 0)
 set(HL_VERSION ${HL_VERSION_MAJOR}.${HL_VERSION_MINOR}.${HL_VERSION_PATCH})
 
@@ -172,6 +172,7 @@ target_compile_features(libhl PUBLIC cxx_std_11 c_std_11)
 
 set(public_headers
     src/hl.h
+    src/hl_ffi.h
     src/hlc.h
 )
 
@@ -214,7 +215,7 @@ endif()
 if(WIN32)
     target_link_libraries(libhl ws2_32 user32 winmm)
 else()
-    target_link_libraries(libhl m dl)
+    target_link_libraries(libhl m ${CMAKE_DL_LIBS})
 
     if(ANDROID)
         target_link_libraries(libhl log)
@@ -227,18 +228,29 @@ if (WITH_VM)
     add_executable(hl
         src/code.c
         src/jit.c
+        src/jit_emit.c
+        src/jit_regs.c
+        src/jit_x86_64.c
+        src/jit_dump.c
         src/main.c
         src/module.c
+        src/reload.c
         src/debugger.c
         src/profile.c
     )
+    # flat package: hl may be copied to <prefix>/bin with libs in <prefix>/lib
+    if(FLAT_INSTALL_TREE)
+        set(HL_RPATH_LIBDIR lib)
+    else()
+        set(HL_RPATH_LIBDIR ${CMAKE_INSTALL_LIBDIR})
+    endif()
     if(APPLE)
         set_target_properties(hl PROPERTIES
-            INSTALL_RPATH "@executable_path;@executable_path/../${CMAKE_INSTALL_LIBDIR}"
+            INSTALL_RPATH "@executable_path;@executable_path/../${HL_RPATH_LIBDIR}"
         )
     elseif (UNIX)
         set_target_properties(hl PROPERTIES
-            INSTALL_RPATH "$ORIGIN;$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
+            INSTALL_RPATH "$ORIGIN;$ORIGIN/../${HL_RPATH_LIBDIR}"
         )
     endif()
 

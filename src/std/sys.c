@@ -46,8 +46,8 @@
 #	define getcwd(buf,size) (void*)(int_val)GetCurrentDirectoryW(size,buf)
 #	define chdir	!SetCurrentDirectoryW
 #	define system	_wsystem
-typedef struct _stat32 pstat;
-#	define stat		_wstat32
+typedef struct _stat64 pstat;
+#	define stat		_wstat64
 #	define unlink	_wunlink
 #	define rename	_wrename
 #	define mkdir(path,mode)	_wmkdir(path)
@@ -143,9 +143,6 @@ HL_PRIM int hl_sys_set_flags( int flags ) {
 
 HL_PRIM void hl_sys_print( vbyte *msg ) {
 	hl_blocking(true);
-#	if defined(HL_XBO) || defined(HL_XBS)
-	OutputDebugStringW((LPCWSTR)msg);
-#	else
 #	ifdef HL_WIN_DESKTOP
 	if( print_flags & PR_WIN_UTF8 ) _setmode(_fileno(stdout),_O_U8TEXT);
 #	endif
@@ -153,8 +150,6 @@ HL_PRIM void hl_sys_print( vbyte *msg ) {
 	if( print_flags & PR_AUTO_FLUSH ) fflush(stdout);
 #	ifdef HL_WIN_DESKTOP
 	if( print_flags & PR_WIN_UTF8 ) _setmode(_fileno(stdout),_O_TEXT);
-#	endif
-
 #	endif
 	hl_blocking(false);
 }
@@ -422,6 +417,68 @@ HL_PRIM varray *hl_sys_stat( vbyte *path ) {
 	return a;
 }
 
+#if defined(HL_WIN)
+static int64 filetime_to_us( FILETIME ft ) {
+	const int64 unix_epoch = 116444736000000000LL; // 100ns ticks from 1601-01-01 to 1970-01-01
+	ULARGE_INTEGER u;
+	u.LowPart = ft.dwLowDateTime;
+	u.HighPart = ft.dwHighDateTime;
+	if( u.QuadPart == 0 )
+		return 0;
+	return ((int64)u.QuadPart - unix_epoch) / 10;
+}
+#else
+static int64 timespec_to_us( struct timespec t ) {
+	return (int64)t.tv_sec * 1000000 + t.tv_nsec / 1000;
+}
+#endif
+
+// same as sys_stat but with 64-bit values and times in microseconds
+HL_PRIM varray *hl_sys_stat2( vbyte *path ) {
+	varray *a;
+	int64 *d;
+	pstat s;
+#	if defined(HL_WIN)
+	WIN32_FILE_ATTRIBUTE_DATA attr;
+	if( stat((pchar*)path,&s) != 0 || !GetFileAttributesExW((pchar*)path,GetFileExInfoStandard,&attr) )
+		return NULL;
+#	else
+	if( stat((pchar*)path,&s) != 0 )
+		return NULL;
+#	endif
+	a = hl_alloc_array(&hlt_i64,11);
+	d = hl_aptr(a,int64);
+	*d++ = s.st_gid;
+	*d++ = s.st_uid;
+#	if defined(HL_WIN)
+	if( attr.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT ) {
+		// symlink/junction : attr describes the link, stat followed it
+		*d++ = (int64)s.st_atime * 1000000;
+		*d++ = (int64)s.st_mtime * 1000000;
+		*d++ = (int64)s.st_ctime * 1000000;
+	} else {
+		*d++ = filetime_to_us(attr.ftLastAccessTime);
+		*d++ = filetime_to_us(attr.ftLastWriteTime);
+		*d++ = filetime_to_us(attr.ftCreationTime);
+	}
+#	elif defined(__APPLE__)
+	*d++ = timespec_to_us(s.st_atimespec);
+	*d++ = timespec_to_us(s.st_mtimespec);
+	*d++ = timespec_to_us(s.st_ctimespec);
+#	else
+	*d++ = timespec_to_us(s.st_atim);
+	*d++ = timespec_to_us(s.st_mtim);
+	*d++ = timespec_to_us(s.st_ctim);
+#	endif
+	*d++ = s.st_size;
+	*d++ = s.st_dev;
+	*d++ = s.st_ino;
+	*d++ = s.st_nlink;
+	*d++ = s.st_rdev;
+	*d++ = s.st_mode;
+	return a;
+}
+
 HL_PRIM bool hl_sys_is_dir( vbyte *path ) {
 	pstat s;
 	if( stat((pchar*)path,&s) != 0 )
@@ -678,9 +735,6 @@ HL_PRIM void hl_sys_init() {
 #ifdef HL_WIN
 	QueryPerformanceFrequency(&qpcFrequency);
 #endif
-#	ifdef HL_WIN_DESKTOP
-	setlocale(LC_CTYPE, ""); // printf to current locale
-#	endif
 }
 
 HL_PRIM vbyte *hl_sys_hl_file() {
@@ -689,6 +743,10 @@ HL_PRIM vbyte *hl_sys_hl_file() {
 
 HL_PRIM bool hl_sys_check_reload( vbyte *debug_alt_file ) {
 	return hl_setup.reload_check != NULL && hl_setup.reload_check(debug_alt_file);
+}
+
+HL_PRIM int hl_hot_sync_statics( hl_type *t, int word ) {
+	return hl_setup.hot_sync_statics ? hl_setup.hot_sync_statics(t, word) : 0;
 }
 
 HL_PRIM bool hl_sys_has_debugger() {
@@ -724,6 +782,7 @@ DEFINE_PRIM(_BOOL, sys_exists, _BYTES);
 DEFINE_PRIM(_BOOL, sys_delete, _BYTES);
 DEFINE_PRIM(_BOOL, sys_rename, _BYTES _BYTES);
 DEFINE_PRIM(_ARR, sys_stat, _BYTES);
+DEFINE_PRIM(_ARR, sys_stat2, _BYTES);
 DEFINE_PRIM(_BOOL, sys_is_dir, _BYTES);
 DEFINE_PRIM(_BOOL, sys_create_dir, _BYTES _I32);
 DEFINE_PRIM(_BOOL, sys_remove_dir, _BYTES);
@@ -737,6 +796,7 @@ DEFINE_PRIM(_I32, sys_get_char, _BOOL);
 DEFINE_PRIM(_ARR, sys_args, _NO_ARG);
 DEFINE_PRIM(_I32, sys_getpid, _NO_ARG);
 DEFINE_PRIM(_BOOL, sys_check_reload, _BYTES);
+DEFINE_PRIM(_I32, hot_sync_statics, _TYPE _I32);
 DEFINE_PRIM(_VOID, sys_profile_event, _I32 _BYTES _I32);
 DEFINE_PRIM(_VOID, sys_vtune_init, _NO_ARG);
 DEFINE_PRIM(_I32, sys_set_flags, _I32);

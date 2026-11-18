@@ -33,6 +33,7 @@ class Window {
 
 	public static inline var HIDDEN    = 0x000001;
 	public static inline var RESIZABLE = 0x000002;
+	public static inline var NO_ACTIVATE = 0x000004;
 
 	static var _UID = 0;
 	var win : WinPtr;
@@ -54,6 +55,10 @@ class Window {
 	public var vsync : Bool;
 	public var dragAndDropEnabled(default, set) : Bool;
 
+	public var displayScale(get, never) : Float;
+
+	var icon : Icon = null;
+
 	public function new( title : String, width : Int, height : Int, x : Int = CW_USEDEFAULT, y : Int = CW_USEDEFAULT, windowFlags : Int = RESIZABLE ) {
 		win = winCreateEx(x, y, width, height, windowFlags);
 		this.title = title;
@@ -69,17 +74,18 @@ class Window {
 
 	function set_displayMode(mode) {
 		displayMode = mode;
+		var monitor = selectedMonitor != null ? @:privateAccess selectedMonitor.bytes : null;
 		if(mode == Windowed) {
-			dx.Window.winChangeDisplaySetting(selectedMonitor != null ? @:privateAccess selectedMonitor.bytes : null, null);
-			winSetFullscreen(win, false);
+			dx.Window.winChangeDisplaySetting(monitor, null);
+			winSetFullscreenOn(win, false, monitor);
 		}
 		else if(mode == Borderless) {
-			dx.Window.winChangeDisplaySetting(selectedMonitor != null ? @:privateAccess selectedMonitor.bytes : null, null);
-			winSetFullscreen(win,true);
+			dx.Window.winChangeDisplaySetting(monitor, null);
+			winSetFullscreenOn(win, true, monitor);
 		}
 		else {
-			var r = dx.Window.winChangeDisplaySetting(selectedMonitor != null ? @:privateAccess selectedMonitor.bytes : null, displaySetting);
-			winSetFullscreen(win,true);
+			var r = dx.Window.winChangeDisplaySetting(monitor, displaySetting);
+			winSetFullscreenOn(win, true, monitor);
 		}
 		return mode;
 	}
@@ -123,6 +129,14 @@ class Window {
 		return winGetRelativeMouseMode();
 	}
 
+	public function captureMouseEvents(enable: Bool) {
+		if (enable) {
+			winSetCapture(win);
+		} else {
+			winReleaseCapture();
+		}
+	}
+
 	public function center( centerPrimary : Bool = true ) {
 		winCenter(win, centerPrimary);
 	}
@@ -130,6 +144,10 @@ class Window {
 	public function destroy() {
 		winDestroy(win);
 		win = null;
+		if (icon != null) {
+			icon.destroy();
+			icon = null;
+		}
 		windows.remove(this);
 	}
 
@@ -149,12 +167,49 @@ class Window {
 		winSetFocus(win);
 	}
 
+	public function setIcon(width : Int, height: Int, pixels : hl.Bytes) {
+		var newIcon = Icon.createIcon(width, height, pixels);
+		if (newIcon == null)
+			return;
+
+		winSetIcon(win, newIcon);
+
+		if (icon != null) {
+			icon.destroy();
+		}
+
+		icon = newIcon;
+	}
+
+	/**
+		Set the window icon by loading a given .ico file from disk.
+	**/
+	public function setIconFromFile(path: String) {
+		var newIcon = Icon.loadIcon(path != null ? @:privateAccess path.bytes : null, -1, -1);
+		if (newIcon == null) {
+			throw "couldn't load icon";
+			return;
+		}
+
+		winSetIcon(win, newIcon);
+
+		if (icon != null) {
+			icon.destroy();
+		}
+
+		icon = newIcon;
+	}
+
 	public function getNextEvent( e : Event ) : Bool {
 		return winGetNextEvent(win, e);
 	}
 
 	public function clipCursor( enable : Bool ) : Void {
 		winClipCursor(win, enable);
+	}
+
+	public function setDarkMode(enable : Bool) : Void {
+		winSetDarkMode(win, enable);
 	}
 
 	public static function getDisplaySettings(monitor : MonitorHandle) : Array<DisplaySetting> {
@@ -184,6 +239,14 @@ class Window {
 
 	public static function getCurrentDisplaySetting(monitor : MonitorHandle, registry : Bool = false) : DisplaySetting {
 		return winGetCurrentDisplaySetting(monitor != null ? @:privateAccess monitor.bytes : null, registry);
+	}
+
+	public function setZoomed(zoomed: Bool) : Void {
+		winSetZoomed(win, zoomed);
+	}
+
+	public function isZoomed() : Bool {
+		return winIsZoomed(win);
 	}
 
 	public static function getMonitors() : Array<Monitor> {
@@ -231,6 +294,15 @@ class Window {
 		return h;
 	}
 
+	function get_displayScale() : Float {
+		return winGetScaleFactorForWindow(win);
+	}
+
+	@:hlNative("?directx", "win_get_scale_factor_for_window")
+	static function winGetScaleFactorForWindow(win: WinPtr) : Float {
+		return 1.0;
+	}
+
 	function get_x() {
 		var x = 0;
 		winGetPosition(win, x, null);
@@ -260,6 +332,15 @@ class Window {
 	@:hlNative("?directx", "win_get_display_settings")
 	static function winGetDisplaySettings(monitor : hl.Bytes) : hl.NativeArray<Dynamic> {
 		return null;
+	}
+
+	@:hlNative("?directx", "win_set_zoomed")
+	static function winSetZoomed(win: WinPtr, zoomed: Bool) {
+	}
+
+	@:hlNative("?directx", "win_is_zoomed")
+	static function winIsZoomed(win: WinPtr) : Bool {
+		return false;
 	}
 
 	@:hlNative("?directx", "win_get_current_display_setting")
@@ -294,6 +375,11 @@ class Window {
 	}
 
 	static function winSetFullscreen( win : WinPtr, fs : Bool ) {
+	}
+
+	@:hlNative("?directx", "win_set_fullscreen_on")
+	static function winSetFullscreenOn( win : WinPtr, fs : Bool, monitor : hl.Bytes ) {
+		winSetFullscreen(win, fs);
 	}
 
 	static function winSetSize( win : WinPtr, width : Int, height : Int ) {
@@ -349,6 +435,10 @@ class Window {
 		return 0;
 	}
 
+	@:hlNative("?directx", "win_set_dark_mode")
+	static function winSetDarkMode(win: WinPtr, enabled: Bool) : Void {
+	}
+
 	static function winGetNextEvent( win : WinPtr, event : Dynamic ) : Bool {
 		return false;
 	}
@@ -372,6 +462,14 @@ class Window {
 		return false;
 	}
 
+	@:hlNative("?directx", "win_set_capture")
+	static function winSetCapture(win: WinPtr) {
+	}
+
+	@:hlNative("?directx", "win_release_capture")
+	static function winReleaseCapture() {
+	}
+
 	@:hlNative("?directx", "win_set_drag_accept_files")
 	static function winSetDragAcceptFiles( win : WinPtr, enable: Bool ) : Void {
 	}
@@ -383,6 +481,17 @@ class Window {
 	@:hlNative("directx", "detect_keyboard_layout")
 	static function dxDetectKeyboardLayout() : hl.Bytes {
 		return null;
+	}
+
+	@:hlNative("?directx", "win_set_icon")
+	static function winSetIcon(win: WinPtr, icon: Icon) : Void {
+	}
+
+	/**
+		Set the default icon to use when creating a new window.
+	**/
+	@:hlNative("?directx", "win_set_default_icon")
+	public static function setDefaultIcon(icon: Icon) : Void {
 	}
 
 }

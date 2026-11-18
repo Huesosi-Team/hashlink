@@ -19,6 +19,9 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
  */
+#ifndef HL_MODULE_H
+#define HL_MODULE_H
+
 #include <hl.h>
 #include <hlsystem.h>
 #include "opcodes.h"
@@ -45,10 +48,15 @@ struct hl_function {
 	int nregs;
 	int nops;
 	int ref;
+	int nassigns;
 	hl_type *type;
 	hl_type **regs;
 	hl_opcode *ops;
 	int *debug;
+	int *assigns;
+#	define ASSIGN_NAME(f,i)		((f)->assigns[(i)*3])
+#	define ASSIGN_POS(f,i)		((f)->assigns[(i)*3+1])
+#	define ASSIGN_SCOPE_END(f,i)	((f)->assigns[(i)*3+2])
 
 	hl_type_obj *obj;
 	union {
@@ -66,8 +74,13 @@ typedef struct {
 	int *fields;
 } hl_constant;
 
+#define HL_BUILD_ID_SIZE	16
+#define HL_HEADER_SIZE		(4 + 4 + HL_BUILD_ID_SIZE)
+
 typedef struct {
 	int version;
+	int file_size;
+	unsigned char build_id[HL_BUILD_ID_SIZE];
 	int nints;
 	int nfloats;
 	int nstrings;
@@ -89,10 +102,12 @@ typedef struct {
 	char**		debugfiles;
 	int*		debugfiles_lens;
 	uchar**		ustrings;
-	hl_type*	types;
+	hl_type**	types;
+	int*		types_vslots;
 	hl_type**	globals;
 	hl_native*	natives;
 	hl_function*functions;
+	int*		lnames;
 	hl_constant*constants;
 	hl_alloc	alloc;
 	hl_alloc	falloc;
@@ -100,12 +115,11 @@ typedef struct {
 
 typedef struct {
 	void *offsets;
+	void *vars;
 	int start;
+	int vars_size;
 	bool large;
 } hl_debug_infos;
-
-typedef struct _jit_ctx jit_ctx;
-
 
 typedef struct {
 	hl_code *code;
@@ -117,12 +131,15 @@ typedef struct {
 } hl_code_hash;
 
 #if defined(HL_64) && defined(HL_WIN)
-#if defined(HL_CONSOLE)
-#define JIT_CUSTOM_LONGJUMP
-#else
-#define WIN64_UNWIND_TABLES
+//	always enable custom longjmp (Intel CET)
+#	define JIT_CUSTOM_LONGJUMP
+#	if !defined(HL_CONSOLE)
+#		define WIN64_UNWIND_TABLES
+#	endif
 #endif
-#endif
+
+typedef struct _jit_ctx jit_ctx;
+typedef struct hl_hot_reload hl_hot_reload;
 
 typedef struct {
 	hl_code *code;
@@ -136,39 +153,59 @@ typedef struct {
 	hl_code_hash *hash;
 	hl_debug_infos *jit_debug;
 	jit_ctx *jit_ctx;
+	hl_hot_reload *hot;
+	void **functions_extern;
+	hl_type_obj ***hot_uses;
+	void **hot_code;
+	bool debug;
 	hl_module_context ctx;
 #ifdef WIN64_UNWIND_TABLES
+	int unwind_table_size;
 	PRUNTIME_FUNCTION unwind_table;
 #endif
 } hl_module;
 
 hl_code *hl_code_read( const unsigned char *data, int size, char **error_msg );
+int hl_code_read_header( const unsigned char *data, int size, int *file_size, unsigned char *build_id );
 
 hl_code_hash *hl_code_hash_alloc( hl_code *c );
 void hl_code_hash_finalize( hl_code_hash *h );
 void hl_code_hash_free( hl_code_hash *h );
 void hl_code_free( hl_code *c );
+int hl_code_type_index( hl_code *c, hl_type *t );
 int hl_code_hash_type( hl_code_hash *h, hl_type *t );
-void hl_code_hash_remap_globals( hl_code_hash *hnew, hl_code_hash *hold );
+void hl_code_hash_remap_globals( hl_code_hash *hnew, int *remap, int old_count, hl_type **old_types, int *old_signs );
 
 const uchar *hl_get_ustring( hl_code *c, int index );
+const uchar *hl_function_lname( hl_code *c, hl_function *f );
 const char* hl_op_name( int op );
 
 typedef unsigned char h_bool;
+
+#define HL_MODULE_HOT_RELOAD 1
+#define HL_MODULE_DUMP 2
+#define HL_MODULE_DEBUG 4
+
+extern int hl_jit_trampoline;
+void hl_jit_tag_callback( void *native );
+
 hl_module *hl_module_alloc( hl_code *code );
-int hl_module_init( hl_module *m, h_bool hot_reload );
+int hl_module_init( hl_module *m, int flags );
 h_bool hl_module_patch( hl_module *m, hl_code *code );
 void hl_module_free( hl_module *m );
 h_bool hl_module_debug( hl_module *m, int port, h_bool wait );
 hl_type *hl_module_resolve_type( hl_module *m, hl_type *t, bool err );
+hl_module **hl_get_modules( int *count );
+
+#define HL_HOT_RELOAD_VSLOTS 64
+void hl_hot_reload_prepare( hl_module *m );
+void hl_hot_reload_init( hl_module *m );
+void hl_hot_reload_free( hl_hot_reload *hr );
+void hl_hot_reload_file_init( const void *file, hl_code *code );
+bool hl_hot_reload_file_changed( const void *file );
+void hl_hot_reload_file_loaded( hl_code *code );
 
 void hl_profile_setup( int sample_count );
 void hl_profile_end();
 
-jit_ctx *hl_jit_alloc();
-void hl_jit_free( jit_ctx *ctx, h_bool can_reset );
-void hl_jit_reset( jit_ctx *ctx, hl_module *m );
-void hl_jit_init( jit_ctx *ctx, hl_module *m );
-int hl_jit_function( jit_ctx *ctx, hl_module *m, hl_function *f );
-void *hl_jit_code( jit_ctx *ctx, hl_module *m, int *codesize, hl_debug_infos **debug, hl_module *previous );
-void hl_jit_patch_method( void *old_fun, void **new_fun_table );
+#endif

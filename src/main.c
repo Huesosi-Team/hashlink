@@ -20,7 +20,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 #include <hl.h>
-#include <hlmodule.h>
+#include <jit.h>
 #include "hlsystem.h"
 
 #ifdef HL_WIN
@@ -51,20 +51,7 @@ typedef struct {
 	hl_code *code;
 	hl_module *m;
 	vdynamic *ret;
-	int file_time;
 } main_context;
-
-static int pfiletime( pchar *file )	{
-#ifdef HL_WIN
-	struct _stat32 st;
-	_wstat32(file,&st);
-	return (int)st.st_mtime;
-#else
-	struct stat st;
-	stat(file,&st);
-	return (int)st.st_mtime;
-#endif
-}
 
 static hl_code *load_code( const pchar *file, char **error_msg, bool print_errors ) {
 	hl_code *code;
@@ -99,16 +86,15 @@ static main_context* main_ctx = NULL;
 static bool check_reload( vbyte *alt_file ) {
 	main_context* m = main_ctx;
 	pchar* file = alt_file ? (pchar*)alt_file : m->file;
-	int time = pfiletime(file);
 	bool changed;
-	if( time == m->file_time )
+	if( !hl_hot_reload_file_changed(file) )
 		return false;
 	char *error_msg = NULL;
 	hl_code *code = load_code(file, &error_msg, false);
 	if( code == NULL )
 		return false;
 	changed = hl_module_patch(m->m, code);
-	m->file_time = time;
+	hl_hot_reload_file_loaded(code);
 	hl_code_free(code);
 	return changed;
 }
@@ -120,8 +106,8 @@ static bool load_plugin( pchar *file ) {
 		return false;
 	int i;
 	for(i=0;i<code->ntypes;i++) {
-		hl_type *t1 = code->types + i;
-		if( t1->kind != HOBJ ) continue;
+		hl_type *t1 = code->types[i];
+		if( t1->kind != HOBJ && t1->kind != HSTRUCT ) continue;
 		hl_type *t2 = hl_module_resolve_type(main_ctx->m, t1, false);
 		// ensure that cast will work between types !
 		if( t2 ) t1->obj->name = t2->obj->name;
@@ -129,7 +115,7 @@ static bool load_plugin( pchar *file ) {
 	hl_module *m = hl_module_alloc(code);
 	if( m == NULL )
 		return false;
-	if( !hl_module_init(m,false) )
+	if( !hl_module_init(m,0) )
 		return false;
 	hl_code_free(code);
 	vclosure cl;
@@ -142,7 +128,7 @@ static bool load_plugin( pchar *file ) {
 
 static vdynamic *resolve_type( hl_type *t, hl_type *gt ) {
 	hl_type *t2 = hl_module_resolve_type(main_ctx->m, t, true);
-	if( t2 == NULL || t2->kind != HOBJ )
+	if( t2 == NULL || (t2->kind != HOBJ && t2->kind != HSTRUCT))
 		return NULL;
 	hl_module_context *m = t->obj->m;
 	hl_module_context *m2 = t2->obj->m;
@@ -209,7 +195,9 @@ int main(int argc, pchar *argv[]) {
 	char *error_msg = NULL;
 	int debug_port = -1;
 	bool debug_wait = false;
+	bool debug_opt = false;
 	bool hot_reload = false;
+	bool dump = false;
 	int profile_count = -1;
 	main_context ctx;
 	bool isExc = false;
@@ -229,10 +217,20 @@ int main(int argc, pchar *argv[]) {
 			debug_wait = true;
 			continue;
 		}
+		if( pcompare(arg,PSTR("--debug-opt")) == 0 ) {
+			debug_opt = true;
+			continue;
+		}
 		if( pcompare(arg,PSTR("--version")) == 0 ) {
 			printf("%d.%d.%d",HL_VERSION>>16,(HL_VERSION>>8)&0xFF,HL_VERSION&0xFF);
 			return 0;
 		}
+#		ifdef HL_DEBUG
+		if( pcompare(arg,PSTR("--dump")) == 0 ) {
+			dump = true;
+			continue;
+		}
+#		endif
 		if( pcompare(arg,PSTR("--hot-reload")) == 0 ) {
 			hot_reload = true;
 			continue;
@@ -259,7 +257,10 @@ int main(int argc, pchar *argv[]) {
 		file = PSTR("hlboot.dat");
 		fchk = pfopen(file,"rb");
 		if( fchk == NULL ) {
-			printf("HL/JIT %d.%d.%d (c)2015-2025 Haxe Foundation\n  Usage : hl [--debug <port>] [--debug-wait] <file>\n",HL_VERSION>>16,(HL_VERSION>>8)&0xFF,HL_VERSION&0xFF);
+			printf("HL/JIT %d.%d.%d (c)2015-2026 Haxe Foundation\n  Usage : hl [--debug <port>] [--debug-wait] <file>\n",HL_VERSION>>16,(HL_VERSION>>8)&0xFF,HL_VERSION&0xFF);
+#			ifdef HL_DEBUG
+			printf("  Debug : hl --dump <file> to dump the jit code without running it\n");
+#			endif
 			return 1;
 		}
 		fclose(fchk);
@@ -276,6 +277,7 @@ int main(int argc, pchar *argv[]) {
 	hl_register_thread(&ctx);
 	main_ctx = &ctx;
 	ctx.file = file;
+	hl_setup.hot_reload = hot_reload;
 	ctx.code = load_code(file, &error_msg, true);
 	if( ctx.code == NULL ) {
 		if( error_msg ) printf("%s\n", error_msg);
@@ -284,15 +286,22 @@ int main(int argc, pchar *argv[]) {
 	ctx.m = hl_module_alloc(ctx.code);
 	if( ctx.m == NULL )
 		return 2;
-	if( !hl_module_init(ctx.m,hot_reload) )
+	if( !hl_module_init(ctx.m,(hot_reload?HL_MODULE_HOT_RELOAD:0) | (dump?HL_MODULE_DUMP:0) | (debug_port > 0 && !debug_opt?HL_MODULE_DEBUG:0)) )
 		return 3;
 	if( hot_reload ) {
-		ctx.file_time = pfiletime(ctx.file);
+		hl_hot_reload_file_init(ctx.file, ctx.code);
 		hl_setup.reload_check = check_reload;
 	}
 	hl_setup.load_plugin = load_plugin;
 	hl_setup.resolve_type = resolve_type;
 	hl_code_free(ctx.code);
+	if( dump ) {
+		// the code has been dumped while jitting, don't run it
+		hl_module_free(ctx.m);
+		hl_free(&ctx.code->alloc);
+		hl_global_free();
+		return 0;
+	}
 	if( debug_port > 0 && !hl_module_debug(ctx.m,debug_port,debug_wait) ) {
 		fprintf(stderr,"Could not start debugger on port %d\n",debug_port);
 		return 4;
@@ -307,14 +316,21 @@ int main(int argc, pchar *argv[]) {
 	if( isExc ) {
 		hl_print_uncaught_exception(ctx.ret);
 		hl_debug_break();
+#ifdef HL_THREADS
+		hl_gc_major();
+#else
 		hl_global_free();
+#endif
 		return 1;
 	}
+#ifdef HL_THREADS
+	// other threads may still be running and crash if globals are freed, so only run a gc here
+	hl_gc_major();
+#else
 	hl_module_free(ctx.m);
 	hl_free(&ctx.code->alloc);
-	// do not call hl_unregister_thread() or hl_global_free will display error
-	// on global_lock if there are threads that are still running (such as debugger)
 	hl_global_free();
+#endif
 	return 0;
 }
 

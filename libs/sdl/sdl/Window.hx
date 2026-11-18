@@ -26,26 +26,30 @@ class Window {
 
 	public static inline var SDL_WINDOW_FULLSCREEN         = 0x00000001;
 	public static inline var SDL_WINDOW_OPENGL             = 0x00000002;
-	public static inline var SDL_WINDOW_SHOWN              = 0x00000004;
+	public static inline var SDL_WINDOW_OCCLUDED           = 0x00000004;
 	public static inline var SDL_WINDOW_HIDDEN             = 0x00000008;
 	public static inline var SDL_WINDOW_BORDERLESS         = 0x00000010;
 	public static inline var SDL_WINDOW_RESIZABLE          = 0x00000020;
 	public static inline var SDL_WINDOW_MINIMIZED          = 0x00000040;
 	public static inline var SDL_WINDOW_MAXIMIZED          = 0x00000080;
-	public static inline var SDL_WINDOW_INPUT_GRABBED      = 0x00000100;
+	public static inline var SDL_WINDOW_MOUSE_GRABBED      = 0x00000100;
 	public static inline var SDL_WINDOW_INPUT_FOCUS        = 0x00000200;
 	public static inline var SDL_WINDOW_MOUSE_FOCUS        = 0x00000400;
-	public static inline var SDL_WINDOW_FULLSCREEN_DESKTOP = 0x00001001;
 	public static inline var SDL_WINDOW_FOREIGN            = 0x00000800;
+	public static inline var SDL_WINDOW_MODAL              = 0x00001000;
 	public static inline var SDL_WINDOW_ALLOW_HIGHDPI      = 0x00002000;
 	public static inline var SDL_WINDOW_MOUSE_CAPTURE      = 0x00004000;
-	public static inline var SDL_WINDOW_ALWAYS_ON_TOP      = 0x00008000;
-	public static inline var SDL_WINDOW_SKIP_TASKBAR       = 0x00010000;
+	public static inline var SDL_WINDOW_ALWAYS_ON_TOP      = 0x00010000;
 	public static inline var SDL_WINDOW_UTILITY            = 0x00020000;
 	public static inline var SDL_WINDOW_TOOLTIP            = 0x00040000;
 	public static inline var SDL_WINDOW_POPUP_MENU         = 0x00080000;
 	public static inline var SDL_WINDOW_VULKAN             = 0x10000000;
 	public static inline var SDL_WINDOW_METAL              = 0x20000000;
+
+	// SDL2 compatibility
+	public static inline var SDL_WINDOW_SHOWN              = 0x00000004; // SDL2 compat
+	public static inline var SDL_WINDOW_INPUT_GRABBED      = 0x00000100; // SDL2 compat
+	public static inline var SDL_WINDOW_SKIP_TASKBAR       = 0x00020000; // SDL2 compat
 
 	var win : WinPtr;
 	var glctx : GLContext;
@@ -68,10 +72,13 @@ class Window {
 	public var opacity(get, set) : Float;
 	public var grab(get, set) : Bool;
 
-	public function new( title : String, width : Int, height : Int, x : Int = SDL_WINDOWPOS_CENTERED, y : Int = SDL_WINDOWPOS_CENTERED, sdlFlags : Int = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE ) {
+	public var displayScale(get, null) : Float;
+
+	public function new( title : String, width : Int, height : Int, x : Int = SDL_WINDOWPOS_CENTERED, y : Int = SDL_WINDOWPOS_CENTERED, sdlFlags : Int = SDL_WINDOW_RESIZABLE ) {
 		while( true ) {
 			win = winCreateEx(x, y, width, height, sdlFlags);
 			if( win == null ) throw "Failed to create window";
+			if( sdlFlags & SDL_WINDOW_VULKAN != 0 ) break;
 			glctx = winGetGLContext(win);
 			if( glctx == null || !GL.init() || !testGL() ) {
 				destroy();
@@ -160,6 +167,10 @@ class Window {
 		return visible = b;
 	}
 
+	public function setIcon(surface: Surface) {
+		winSetIcon(win, surface);
+	}
+
 	public function resize( width : Int, height : Int ) {
 		winSetSize(win, width, height);
 	}
@@ -186,6 +197,10 @@ class Window {
 
 	public function warpMouse( x : Int, y : Int ) {
 		warpMouseInWindow(win, x, y);
+	}
+
+	public function captureMouseEvents(enable: Bool) {
+		captureMouse(enable);
 	}
 
 	function get_width() {
@@ -224,6 +239,15 @@ class Window {
 		return h;
 	}
 
+	function get_displayScale() : Float {
+		return winGetDisplayScale(win);
+	}
+
+	@:hlNative("?sdl", "win_get_display_scale")
+	static function winGetDisplayScale(win : WinPtr) : Float {
+		return 0.0;
+	}
+
 	function get_x() {
 		var x = 0;
 		winGetPosition(win, x, null);
@@ -242,7 +266,7 @@ class Window {
 
 	function set_vsync(v) {
 		if( vsync == v ) return v;
-		setVsync(v);
+		if( glctx != null ) setVsync(v);
 		return vsync = v;
 	}
 
@@ -254,16 +278,16 @@ class Window {
 		winSetOpacity(win, v);
 		return v;
 	}
-	
+
 	function get_grab() {
 		return getWindowGrab(win);
 	}
-	
+
 	function set_grab(v) {
 		setWindowGrab(win, v);
 		return v;
 	}
-	
+
 	function get_id() {
 		return winGetId(win);
 	}
@@ -272,7 +296,7 @@ class Window {
 		Set the current window you will render to (in case of multiple windows)
 	**/
 	public function renderTo() {
-		winRenderTo(win, glctx);
+		if( glctx != null ) winRenderTo(win, glctx);
 	}
 
 	public function present() {
@@ -286,11 +310,37 @@ class Window {
 		lastFrame = haxe.Timer.stamp();
 	}
 
+	public function vkCreateSurface( instance : hl.Abstract<"vk_instance"> ) : hl.Abstract<"vk_surface"> {
+		return winVkCreateSurface(win, instance);
+	}
+
+	public static function vkGetInstanceExtensions() : Array<String> {
+		var names = vkGetInstanceExtensionsNative();
+		if( names == null ) return null;
+		return [for( i in 0...names.length ) @:privateAccess String.fromUTF8(names[i])];
+	}
+
 	public function destroy() {
 		try winDestroy(win, glctx) catch( e : Dynamic ) {};
 		win = null;
 		glctx = null;
 		windows.remove(this);
+	}
+
+	public function setMaximized(maximized: Bool) : Void {
+		winSetMaximized(win, maximized);
+	}
+
+	@:hlNative("?sdl", "win_set_maximized")
+	static function winSetMaximized( win : WinPtr, maximized : Bool ) {}
+
+	public function isMaximized() {
+		return winMaximized(win);
+	}
+
+	@:hlNative("?sdl", "win_maximized")
+	static function winMaximized( win : WinPtr ) : Bool {
+		return false;
 	}
 
 	public function maximize() {
@@ -316,7 +366,11 @@ class Window {
 	static function winSetTitle( win : WinPtr, title : hl.Bytes ) {
 	}
 
-	static function winSetPosition( win : WinPtr, width : Int, height : Int ) {
+	@:hlNative("?sdl", "win_set_icon")
+	static function winSetIcon(win : WinPtr, surface: Surface) {
+	}
+
+	static function winSetPosition( win : WinPtr, width : Int, height : Int ) : Void {
 	}
 
 	static function winGetPosition( win : WinPtr, width : hl.Ref<Int>, height : hl.Ref<Int> ) {
@@ -390,14 +444,28 @@ class Window {
 	static function setVsync( b : Bool ) {
 	}
 
+	@:hlNative("?sdl", "win_vk_create_surface")
+	static function winVkCreateSurface( win : WinPtr, instance : hl.Abstract<"vk_instance"> ) : hl.Abstract<"vk_surface"> {
+		return null;
+	}
+
+	@:hlNative("?sdl", "vk_get_instance_extensions")
+	static function vkGetInstanceExtensionsNative() : hl.NativeArray<hl.Bytes> {
+		return null;
+	}
+
 	static function setWindowGrab( win : WinPtr, grab : Bool ) {
 	}
-	
+
 	static function getWindowGrab( win : WinPtr ) : Bool {
 		return false;
 	}
-	
+
 	static function warpMouseInWindow( win : WinPtr, x : Int, y : Int ) : Void {
 	}
 
+	@:hlNative("?sdl", "capture_mouse")
+	static function captureMouse(enable: Bool) {
+		return 0;
+	}
 }
