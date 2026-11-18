@@ -262,24 +262,7 @@ jobs:
             ;;
 
           vs2026)
-            python -c '
-            import re, pathlib
-            p = pathlib.Path("libs/fmt/fmt.vcxproj")
-            text = p.read_text(encoding="utf-8")
-            text = re.sub(r"\s*<ClCompile Include=\"\.\.\\\.\.\\include\\(?:png|turbojpeg)\\[^\"]*\"\s*/>", "", text)
-            inject = """  <ItemDefinitionGroup>
-                <ClCompile>
-                  <AdditionalIncludeDirectories>..\\..\\include\\sdl\\include;..\\..\\include\\sdl-image\\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-                </ClCompile>
-                <Link>
-                  <AdditionalLibraryDirectories>..\\..\\include\\sdl\\lib\\x64;..\\..\\include\\sdl-image\\lib\\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-                  <AdditionalDependencies>SDL3.lib;SDL3_image.lib;%(AdditionalDependencies)</AdditionalDependencies>
-                </Link>
-              </ItemDefinitionGroup>
-            </Project>"""
-            text = text.replace("</Project>", inject)
-            p.write_text(text, encoding="utf-8")
-            '
+            python -c 'import re, pathlib; p = pathlib.Path("libs/fmt/fmt.vcxproj"); text = re.sub(r"\s*<ClCompile Include=\"\.\.\\\.\.\\include\\(?:png|turbojpeg)\\[^\"]*\"\s*/>", "", p.read_text(encoding="utf-8")); inject = "  <ItemDefinitionGroup><ClCompile><AdditionalIncludeDirectories>..\\..\\include\\sdl\\include;..\\..\\include\\sdl-image\\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ClCompile><Link><AdditionalLibraryDirectories>..\\..\\include\\sdl\\lib\\x64;..\\..\\include\\sdl-image\\lib\\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories><AdditionalDependencies>SDL3.lib;SDL3_image.lib;%(AdditionalDependencies)</AdditionalDependencies></Link></ItemDefinitionGroup>\n</Project>"; p.write_text(text.replace("</Project>", inject), encoding="utf-8")'
 
             MSBuild.exe hl.sln //nologo //m //clp:ErrorsOnly \
               //p:Configuration=${{ matrix.msbuild_configuration }} \
