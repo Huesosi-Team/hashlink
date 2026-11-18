@@ -13,9 +13,6 @@ defaults:
 
 jobs:
 
-  # Jobs are split per OS so tests only wait for their own OS builds.
-  # Steps are defined once in the linux jobs and reused via YAML anchors.
-
   ###########################################################
   build-linux:
   ###########################################################
@@ -79,6 +76,9 @@ jobs:
               libuv1-dev${SUFFIX} \
               libvorbis-dev${SUFFIX} \
               libsqlite3-dev${SUFFIX} \
+              libsdl3-dev \
+              libsdl3-image-dev \
+              pkg-config \
               ${EXTRA_APT_PKGS}
 
             # ref https://github.com/libsdl-org/SDL/blob/main/docs/README-linux.md#build-dependencies
@@ -131,7 +131,13 @@ jobs:
             curl -fsSL --retry 3 --retry-delay 5 -o /tmp/sdl.zip https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-devel-3.4.10-${SDL_SUFFIX}.zip
             curl -fsSL --retry 3 --retry-delay 5 -o /tmp/openal.zip https://github.com/kcat/openal-soft/releases/download/1.23.1/openal-soft-1.23.1-bin.zip
             curl -fsSL --retry 3 --retry-delay 5 -o /tmp/ffmpeg.zip ${{ matrix.ffmpeg_url }}
-            7z x /tmp/sdl.zip    -oinclude; mv include/SDL3*   include/sdl
+            
+            7z x /tmp/sdl.zip -oinclude/sdl-temp
+            mkdir -p include/SDL3 include/sdl
+            cp -r include/sdl-temp/include/* include/SDL3/
+            cp -r include/sdl-temp/include/* include/sdl/
+            rm -rf include/sdl-temp
+
             7z x /tmp/openal.zip -oinclude; mv include/openal* include/openal
             7z x /tmp/ffmpeg.zip -oinclude; mv include/ffmpeg* include/ffmpeg
             ;;
@@ -222,7 +228,7 @@ jobs:
 
           cmake-mingw)
             cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }} \
-              -DWITH_DX12=OFF -DWITH_VULKAN=OFF
+              -DWITH_DX12=OFF -DWITH_VULKAN=OFF -DSDL3_DIR="$(pwd)/include/sdl"
 
             cmake --build build --config ${{ matrix.cmake_configuration }} --parallel
             BUILD_FOLDER=build/bin
@@ -368,7 +374,6 @@ jobs:
         build_system: [make, cmake]
 
         exclude:
-          # no Homebrew bottles on Intel: brew bundle builds from source (~40min), cmake covers x86_64
           - architecture: 64
             build_system: make
 
@@ -404,7 +409,7 @@ jobs:
 
         include:
           - target: windows
-            runner: windows-2025 # has VS 2026 preinstalled which supports PlatformToolset <= v145, WindowsTargetPlatformVersion 10
+            runner: windows-2025
             haxe_nightly_dir: windows64
             archive_ext: zip
             ffmpeg_url: https://github.com/HaxeFoundation/hashlink/files/5648056/ffmpeg-3.4.2-win64-dev.zip
@@ -638,13 +643,10 @@ jobs:
     - name: "SCM Checkout"
       uses: actions/checkout@v7
 
-    # not the action's own extraction: its streaming unzip can stop early on a PK\x07\x08 copied
-    # from a CPack zip inside the artifact ("Artifact download failed after 5 retries"),
-    # see also actions/download-artifact#339
     - name: "Get: all build artifacts"
       uses: actions/download-artifact@v8
       with:
-        path: _artifacts
+        name: _artifacts
         skip-decompress: true
 
     - name: "Extract build artifacts"
@@ -666,8 +668,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         set -eux
-
-        # https://hub.github.com/hub-release.1.html
 
         short_commit=$(git rev-parse --short HEAD)
 
