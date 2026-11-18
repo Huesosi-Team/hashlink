@@ -134,18 +134,19 @@ jobs:
             7z x /tmp/sdl_image.zip -oinclude
             mv include/SDL3_image-* include/sdl-image
 
+            if [[ ${{ matrix.build_system }} == cmake-mingw ]]; then
+              cp -r include/sdl/x86_64-w64-mingw32/* include/sdl/
+              cp -r include/sdl-image/x86_64-w64-mingw32/* include/sdl-image/
+            fi
+
             7z x /tmp/openal.zip -oinclude
             mv include/openal* include/openal
 
             7z x /tmp/ffmpeg.zip -oinclude
             mv include/ffmpeg* include/ffmpeg
 
-            if [[ ${{ matrix.build_system }} == cmake-mingw ]]; then
-              SDL_PREFIX="$(pwd)/include/sdl/x86_64-w64-mingw32;$(pwd)/include/sdl-image/x86_64-w64-mingw32"
-            else
-              SDL_PREFIX="$(pwd)/include/sdl;$(pwd)/include/sdl-image"
-            fi
-            echo "SDL_PREFIX=$SDL_PREFIX" >> $GITHUB_ENV
+            WIN_PWD=$(cygpath -m "$(pwd)")
+            echo "SDL_PREFIX=${WIN_PWD}/include/sdl;${WIN_PWD}/include/sdl-image" >> $GITHUB_ENV
             ;;
         esac
 
@@ -294,6 +295,18 @@ jobs:
             ;;
 
           vs2026)
+            python - << 'EOF'
+            import re, pathlib
+            p = pathlib.Path("libs/fmt/fmt.vcxproj")
+            text = re.sub(r'\s*<ClCompile Include="\.\.\\\.\.\\include\\(?:png|turbojpeg)\\[^"]*"\s*/>', '', p.read_text(encoding="utf-8"))
+            p.write_text(text, encoding="utf-8")
+            EOF
+
+            WIN_PWD=$(cygpath -w "$(pwd)")
+            export CL="/I${WIN_PWD}\\include\\sdl\\include /I${WIN_PWD}\\include\\sdl-image\\include"
+            export LIB="${WIN_PWD}\\include\\sdl\\lib\\x64;${WIN_PWD}\\include\\sdl-image\\lib\\x64;${LIB:-}"
+            export LINK="SDL3.lib SDL3_image.lib"
+
             MSBuild.exe hl.sln //nologo //m //clp:ErrorsOnly \
               //p:Configuration=${{ matrix.msbuild_configuration }} \
               //p:Platform=${{ matrix.architecture_string }}
@@ -525,9 +538,11 @@ jobs:
           --toolchain $ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
           -DANDROID_PLATFORM=24 -DANDROID_ABI=arm64-v8a \
           -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_FIND_ROOT_PATH=/tmp/android-deps \
           -DCMAKE_PREFIX_PATH=/tmp/android-deps \
           -DCMAKE_INSTALL_PREFIX=/tmp/android-deps \
-          -DSDLIMAGE_VENDORED=ON
+          -DSDLIMAGE_VENDORED=OFF \
+          -DSDLIMAGE_AVIF=OFF -DSDLIMAGE_JXL=OFF -DSDLIMAGE_TIF=OFF -DSDLIMAGE_WEBP=OFF
         cmake --build /tmp/SDL3_image-android
         cmake --install /tmp/SDL3_image-android
 
@@ -536,6 +551,7 @@ jobs:
         set -ex
         cmake -B build -G Ninja --toolchain $ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
           -DANDROID_PLATFORM=24 -DANDROID_ABI=arm64-v8a -DBUILD_SHARED_LIBS=OFF -DWITH_VM=OFF \
+          -DCMAKE_FIND_ROOT_PATH=/tmp/android-deps \
           -DCMAKE_PREFIX_PATH=/tmp/android-deps
         cmake --build build
 
