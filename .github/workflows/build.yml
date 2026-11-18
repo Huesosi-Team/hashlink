@@ -135,6 +135,7 @@ jobs:
             if [[ ${{ matrix.build_system }} == cmake-mingw ]]; then
               cp -r /tmp/sdl_image_raw/*/x86_64-w64-mingw32/* include/sdl-image/
               cp -r include/sdl/x86_64-w64-mingw32/* include/sdl/
+              cp include/sdl-image/lib/libSDL3_image.dll.a include/sdl-image/lib/x64/SDL3_image.lib
             else
               cp -r "$(find /tmp/sdl_image_raw -type d -name SDL3_image | head -n 1)" include/sdl-image/include/
               cp "$(find /tmp/sdl_image_raw -path '*x64*' -name 'SDL3_image.lib' | head -n 1)" include/sdl-image/lib/x64/
@@ -303,7 +304,7 @@ jobs:
             case "${{matrix.target}}" in
               windows)
                 if [[ ${{ matrix.build_system }} == cmake-mingw ]]; then
-                  export PATH="$(pwd)/build/bin:$(pwd)/include/sdl/x86_64-w64-mingw32/bin:$(pwd)/include/sdl-image/x86_64-w64-mingw32/bin:$PATH"
+                  export PATH="$(pwd)/build/bin:$(pwd)/include/sdl/bin:$(pwd)/include/sdl-image/bin:$PATH"
                 else
                   export PATH="$(pwd)/build/bin:$(pwd)/include/sdl/lib/x64:$(pwd)/include/sdl-image/lib/x64:$PATH"
                 fi
