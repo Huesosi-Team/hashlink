@@ -68,7 +68,6 @@ jobs:
               libmbedtls-dev${SUFFIX} \
               libopenal-dev${SUFFIX} \
               libpng-dev${SUFFIX} \
-              libturbojpeg-dev${SUFFIX} \
               libuv1-dev${SUFFIX} \
               libvorbis-dev${SUFFIX} \
               libsqlite3-dev${SUFFIX} \
@@ -262,8 +261,6 @@ jobs:
             ;;
 
           vs2026)
-            python -c 'import re, pathlib; p = pathlib.Path("libs/fmt/fmt.vcxproj"); text = re.sub(r"\s*<ClCompile Include=\"\.\.\\\.\.\\include\\(?:png|turbojpeg)\\[^\"]*\"\s*/>", "", p.read_text(encoding="utf-8")); inject = "  <ItemDefinitionGroup><ClCompile><AdditionalIncludeDirectories>..\\..\\include\\sdl\\include;..\\..\\include\\sdl-image\\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ClCompile><Link><AdditionalLibraryDirectories>..\\..\\include\\sdl\\lib\\x64;..\\..\\include\\sdl-image\\lib\\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories><AdditionalDependencies>SDL3.lib;SDL3_image.lib;%(AdditionalDependencies)</AdditionalDependencies></Link></ItemDefinitionGroup>\n</Project>"; p.write_text(text.replace("</Project>", inject), encoding="utf-8")'
-
             MSBuild.exe hl.sln //nologo //m //clp:ErrorsOnly \
               //p:Configuration=${{ matrix.msbuild_configuration }} \
               //p:Platform=${{ matrix.architecture_string }}
@@ -558,7 +555,7 @@ jobs:
           chmod +x /usr/local/bin/gcc
         fi
         sudo apt-get update -qqy
-        sudo apt-get install -qqy libpng16-16t64${SUFFIX} libjpeg-turbo8${SUFFIX} libturbojpeg${SUFFIX} zlib1g${SUFFIX} libogg0${SUFFIX} libvorbis0a${SUFFIX} \
+        sudo apt-get install -qqy libpng16-16t64${SUFFIX} libjpeg-turbo8${SUFFIX} zlib1g${SUFFIX} libogg0${SUFFIX} libvorbis0a${SUFFIX} \
           libvorbisfile3${SUFFIX} libvorbisenc2${SUFFIX} libsqlite3-0${SUFFIX} libmbedtls14t64${SUFFIX} ${EXTRA_APT_PKGS}
 
     - name: Install brew packages

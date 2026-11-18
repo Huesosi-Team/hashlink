@@ -1,4 +1,3 @@
-
 LBITS := $(shell getconf LONG_BIT)
 MARCH ?= $(LBITS)
 PREFIX ?= /usr/local
@@ -140,12 +139,12 @@ ifeq ($(MARCH),32)
 CFLAGS += -msse2 -mfpmath=sse
 CC=i686-pc-cygwin-gcc
 BUILD_DIR = Release
-VS_SDL_LIBRARY ?= include/sdl/lib/x86/SDL3.dll
+VS_SDL_LIBRARY ?= include/sdl/lib/x86/SDL3.dll include/sdl-image/lib/x86/SDL3_image.dll
 VS_OPENAL_LIBRARY ?= include/openal/bin/Win32/soft_oal.dll
 VS_DX_LIBRARY ?= include/dx/bin/x86/dxcompiler.dll include/dx/bin/x86/dxil.dll
 else
 BUILD_DIR = x64/Release
-VS_SDL_LIBRARY ?= include/sdl/lib/x64/SDL3.dll
+VS_SDL_LIBRARY ?= include/sdl/lib/x64/SDL3.dll include/sdl-image/lib/x64/SDL3_image.dll
 VS_OPENAL_LIBRARY ?= include/openal/bin/Win64/soft_oal.dll
 VS_DX_LIBRARY ?= include/dx/bin/x64/dxcompiler.dll include/dx/bin/x64/dxil.dll
 endif
@@ -168,10 +167,13 @@ BREW_PREFIX := $(shell brew --prefix)
 # prefixes for keg-only packages
 BREW_OPENAL_PREFIX := $(shell brew --prefix openal-soft)
 BREW_SDL_PREFIX := $(shell brew --prefix sdl3)
+BREW_SDL_IMAGE_PREFIX := $(shell brew --prefix sdl3_image)
 
 CFLAGS += -arch $(ARCH)
 CPPFLAGS += -I include -I $(BREW_PREFIX)/include
 
+FMT_CPPFLAGS += -I $(BREW_SDL_PREFIX)/include -I $(BREW_SDL_IMAGE_PREFIX)/include
+fmt_LDFLAGS = -L$(BREW_SDL_PREFIX)/lib -L$(BREW_SDL_IMAGE_PREFIX)/lib
 SDL_CPPFLAGS = -DGL_SILENCE_DEPRECATION
 OPENAL_CPPFLAGS = -I $(BREW_OPENAL_PREFIX)/include -Dopenal_soft
 
@@ -214,11 +216,10 @@ USE_LIBHL_LDFLAGS = -Wl,-rpath,.:'$$ORIGIN':$(INSTALL_LIB_DIR)
 ifeq ($(MARCH),32)
 CFLAGS += -msse2 -mfpmath=sse
 CPPFLAGS += -I /usr/include/i386-linux-gnu
-fmt_LDFLAGS = -L/opt/libjpeg-turbo/lib
-else
-fmt_LDFLAGS = -L/opt/libjpeg-turbo/lib64
 endif
 
+FMT_CPPFLAGS += $(shell pkg-config --cflags sdl3 sdl3-image)
+fmt_LDFLAGS = $(shell pkg-config --libs-only-L --libs-only-other sdl3 sdl3-image)
 SDL_CPPFLAGS = $(shell pkg-config --cflags sdl3)
 sdl_LDFLAGS = $(shell pkg-config --libs-only-L --libs-only-other sdl3)
 sdl_LDLIBS = $(shell pkg-config --libs-only-l sdl3) -lGL
@@ -282,7 +283,7 @@ $(HL) $(HLC):
 	$(HDLL_LINK) $(USE_LIBHL_LDFLAGS) $(HDLL_LDFLAGS) $($*_LDFLAGS) -shared $^ $($*_LDLIBS) -o $@
 
 $(FMT): CPPFLAGS += $(FMT_CPPFLAGS)
-fmt_LDLIBS = -lz -lpng -lturbojpeg -lvorbisfile -lm
+fmt_LDLIBS = -lz -lSDL3 -lSDL3_image -lvorbisfile -lm
 fmt.hdll: $(FMT) $(LIBHL)
 
 $(SDL): CPPFLAGS += $(SDL_CPPFLAGS)
