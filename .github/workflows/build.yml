@@ -1,11 +1,9 @@
-# https://docs.github.com/en/free-pro-team@latest/actions/reference/workflow-syntax-for-github-actions
 name: Build
 
 on:
   push:
   pull_request:
   workflow_dispatch:
-    # https://github.blog/changelog/2020-07-06-github-actions-manual-triggers-with-workflow_dispatch/
 
 defaults:
   run:
@@ -50,8 +48,6 @@ jobs:
     - name: "Mac homebrew workaround"
       if: matrix.target == 'darwin'
       run: |
-        # see https://github.com/Homebrew/homebrew-core/issues/165793#issuecomment-1989441193
-        # see https://github.com/Homebrew/brew/blob/master/.github/workflows/tests.yml
         brew unlink python && brew link --overwrite python
 
     - name: "Install: Required Dev Packages"
@@ -79,7 +75,6 @@ jobs:
               pkg-config \
               ${EXTRA_APT_PKGS}
 
-            # ref https://github.com/libsdl-org/SDL/blob/main/docs/README-linux.md#build-dependencies
             sudo apt-get install --no-install-recommends -y \
               libasound2-dev \
               libpulse-dev \
@@ -114,6 +109,7 @@ jobs:
               brew update
               HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew bundle --no-upgrade
             fi
+            brew install sdl3 sdl3_image
             ;;
 
           windows)
@@ -126,18 +122,30 @@ jobs:
             else
               SDL_SUFFIX=VC
             fi
+
             curl -fsSL --retry 3 --retry-delay 5 -o /tmp/sdl.zip https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-devel-3.4.10-${SDL_SUFFIX}.zip
+            curl -fsSL --retry 3 --retry-delay 5 -o /tmp/sdl_image.zip https://github.com/libsdl-org/SDL_image/releases/download/release-3.4.0/SDL3_image-devel-3.4.0-${SDL_SUFFIX}.zip
             curl -fsSL --retry 3 --retry-delay 5 -o /tmp/openal.zip https://github.com/kcat/openal-soft/releases/download/1.23.1/openal-soft-1.23.1-bin.zip
             curl -fsSL --retry 3 --retry-delay 5 -o /tmp/ffmpeg.zip ${{ matrix.ffmpeg_url }}
-            
-            7z x /tmp/sdl.zip -oinclude/sdl-temp
-            mkdir -p include/SDL3 include/sdl
-            cp -r include/sdl-temp/include/* include/SDL3/
-            cp -r include/sdl-temp/include/* include/sdl/
-            rm -rf include/sdl-temp
 
-            7z x /tmp/openal.zip -oinclude; mv include/openal* include/openal
-            7z x /tmp/ffmpeg.zip -oinclude; mv include/ffmpeg* include/ffmpeg
+            7z x /tmp/sdl.zip -oinclude
+            mv include/SDL3-* include/sdl
+
+            7z x /tmp/sdl_image.zip -oinclude
+            mv include/SDL3_image-* include/sdl-image
+
+            7z x /tmp/openal.zip -oinclude
+            mv include/openal* include/openal
+
+            7z x /tmp/ffmpeg.zip -oinclude
+            mv include/ffmpeg* include/ffmpeg
+
+            if [[ ${{ matrix.build_system }} == cmake-mingw ]]; then
+              SDL_PREFIX="$(pwd)/include/sdl/x86_64-w64-mingw32;$(pwd)/include/sdl-image/x86_64-w64-mingw32"
+            else
+              SDL_PREFIX="$(pwd)/include/sdl;$(pwd)/include/sdl-image"
+            fi
+            echo "SDL_PREFIX=$SDL_PREFIX" >> $GITHUB_ENV
             ;;
         esac
 
@@ -150,14 +158,14 @@ jobs:
     - name: "Install: GCC 14"
       if: matrix.build_system == 'makegcc14'
       run: |
-          sudo add-apt-repository universe
-          sudo apt update
-          sudo apt install -y gcc-14 g++-14
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 60 --slave /usr/bin/g++ g++ /usr/bin/g++-14
-          if [[ ${{ matrix.architecture }} == 32 ]]; then
-            sudo apt install -y gcc-14-multilib g++-14-multilib
-          fi
-          gcc --version
+        sudo add-apt-repository universe
+        sudo apt update
+        sudo apt install -y gcc-14 g++-14
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 60 --slave /usr/bin/g++ g++ /usr/bin/g++-14
+        if [[ ${{ matrix.architecture }} == 32 ]]; then
+          sudo apt install -y gcc-14-multilib g++-14-multilib
+        fi
+        gcc --version
 
     - name: Install haxe
       uses: krdlab/setup-haxe@v2
@@ -167,23 +175,62 @@ jobs:
     - name: "Configure: Haxelib"
       run: |
         set -eux
-
         haxelib setup ~/haxelib
         haxelib install hashlink
         haxelib list
 
-    - name: "Build and install SDL3"
+    - name: "Build and install SDL3 & SDL3_image"
       if: runner.os == 'Linux'
       run: |
-        wget https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz
-        tar -xzvf SDL3-3.4.10.tar.gz
-        cd SDL3-3.4.10/
-        mkdir build
-        cd build
-        cmake ..
-        make
-        sudo make install
+        set -eux
+        curl -fsSL --retry 3 --retry-delay 5 -o /tmp/SDL3.tar.gz https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz
+        tar -xzf /tmp/SDL3.tar.gz -C /tmp
+        cmake -S /tmp/SDL3-3.4.10 -B /tmp/SDL3-build -DCMAKE_BUILD_TYPE=Release
+        cmake --build /tmp/SDL3-build --parallel
+        sudo cmake --install /tmp/SDL3-build
+        sudo ldconfig
 
+        curl -fsSL --retry 3 --retry-delay 5 -o /tmp/SDL3_image.tar.gz https://github.com/libsdl-org/SDL_image/releases/download/release-3.4.0/SDL3_image-3.4.0.tar.gz
+        tar -xzf /tmp/SDL3_image.tar.gz -C /tmp
+        cmake -S /tmp/SDL3_image-3.4.0 -B /tmp/SDL3_image-build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DSDLIMAGE_VENDORED=OFF
+        cmake --build /tmp/SDL3_image-build --parallel
+        sudo cmake --install /tmp/SDL3_image-build
+        sudo ldconfig
+
+    - name: "Patch fmt.vcxproj for SDL3_image (vs2026)"
+      if: matrix.build_system == 'vs2026'
+      run: |
+        python - << 'EOF'
+        import re, pathlib
+
+        p = pathlib.Path("libs/fmt/fmt.vcxproj")
+        text = p.read_text(encoding="utf-8")
+
+        text = re.sub(r'\s*<ClCompile Include="\.\.\\\.\.\\include\\(?:png|turbojpeg)\\[^"]*"\s*/>', '', text)
+
+        text = text.replace(
+            r'..\..\include\png;..\..\include\turbojpeg',
+            r'..\..\include\sdl\include;..\..\include\sdl-image\include'
+        )
+        if r'..\..\include\sdl\include' not in text:
+            text = text.replace(
+                '<AdditionalIncludeDirectories>',
+                '<AdditionalIncludeDirectories>..\\..\\include\\sdl\\include;..\\..\\include\\sdl-image\\include;'
+            )
+
+        text = text.replace(
+            '<AdditionalLibraryDirectories>',
+            '<AdditionalLibraryDirectories>..\\..\\include\\sdl\\lib\\x64;..\\..\\include\\sdl-image\\lib\\x64;'
+        )
+        text = text.replace(
+            '<AdditionalDependencies>',
+            '<AdditionalDependencies>SDL3.lib;SDL3_image.lib;'
+        )
+
+        p.write_text(text, encoding="utf-8")
+        EOF
 
     - name: "Build: HashLink"
       run: |
@@ -195,21 +242,24 @@ jobs:
               windows*)
                 cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }} \
                   -G "${{ matrix.cmake_generator }}" \
-                  -A ${{ matrix.architecture_string }}
+                  -A ${{ matrix.architecture_string }} \
+                  -DCMAKE_PREFIX_PATH="${{ env.SDL_PREFIX }}"
                 ;;
               darwin64)
                 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }} \
                   -DDOWNLOAD_DEPENDENCIES=ON \
                   -DCMAKE_OSX_ARCHITECTURES=x86_64 \
                   -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-                  -DFLAT_INSTALL_TREE=ON
+                  -DFLAT_INSTALL_TREE=ON \
+                  -DCMAKE_PREFIX_PATH="$(brew --prefix)"
                 ;;
               darwinarm64)
                 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }} \
                   -DDOWNLOAD_DEPENDENCIES=ON \
                   -DCMAKE_OSX_ARCHITECTURES=arm64 \
                   -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-                  -DFLAT_INSTALL_TREE=ON
+                  -DFLAT_INSTALL_TREE=ON \
+                  -DCMAKE_PREFIX_PATH="$(brew --prefix)"
                 ;;
               linux32)
                 cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }} -DWITH_SDL=OFF \
@@ -226,16 +276,19 @@ jobs:
 
           cmake-mingw)
             cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }} \
-              -DWITH_DX12=OFF -DWITH_VULKAN=OFF -DSDL3_DIR="$(pwd)/include/sdl"
+              -DWITH_DX12=OFF -DWITH_VULKAN=OFF \
+              -DCMAKE_PREFIX_PATH="${{ env.SDL_PREFIX }}"
 
             cmake --build build --config ${{ matrix.cmake_configuration }} --parallel
             BUILD_FOLDER=build/bin
             ;;
+
           cmake-clang-cl)
             cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }} \
               -G "${{ matrix.cmake_generator }}" \
               -A ${{ matrix.architecture_string }} \
-              -T ClangCL
+              -T ClangCL \
+              -DCMAKE_PREFIX_PATH="${{ env.SDL_PREFIX }}"
             cmake --build build --config ${{ matrix.cmake_configuration }}
             BUILD_FOLDER=build/bin
             ;;
@@ -249,12 +302,14 @@ jobs:
               64) BUILD_FOLDER=x64/${{ matrix.msbuild_configuration }} ;;
               32) BUILD_FOLDER=${{ matrix.msbuild_configuration }} ;;
             esac
+            cp include/sdl/lib/x64/SDL3.dll "$BUILD_FOLDER/"
+            cp include/sdl-image/lib/x64/SDL3_image.dll "$BUILD_FOLDER/"
             echo "WINDOWS_BUILD_FOLDER=$BUILD_FOLDER" >> $GITHUB_ENV
             ;;
 
           make*)
             if [[ ${{ matrix.target }}${{ matrix.architecture }} == linux32 ]]; then
-              make -o sdl.hdll # 32 bit sdl cannot be installed
+              make -o sdl.hdll
             else
               make
             fi
@@ -264,7 +319,6 @@ jobs:
             fi
             BUILD_FOLDER=.
             ;;
-
         esac
 
         ls -l $BUILD_FOLDER
@@ -277,7 +331,11 @@ jobs:
           cmake*)
             case "${{matrix.target}}" in
               windows)
-                export PATH=$(pwd)/build/bin:$PATH
+                if [[ ${{ matrix.build_system }} == cmake-mingw ]]; then
+                  export PATH="$(pwd)/build/bin:$(pwd)/include/sdl/x86_64-w64-mingw32/bin:$(pwd)/include/sdl-image/x86_64-w64-mingw32/bin:$PATH"
+                else
+                  export PATH="$(pwd)/build/bin:$(pwd)/include/sdl/lib/x64:$(pwd)/include/sdl-image/lib/x64:$PATH"
+                fi
                 ;;
               *)
                 cmake --install build --prefix /tmp/hashlink
@@ -301,7 +359,6 @@ jobs:
                 ${{ matrix.architecture == 32 && '-D hl-legacy32' || '' }}
               ./hl hello.hl
 
-              # ensure the executable still works when installed globally
               cp hello.hl /tmp
               pushd /tmp
               hl hello.hl
@@ -328,11 +385,11 @@ jobs:
 
         case "${{ matrix.target }}${{matrix.architecture}}" in
           darwinarm64)   platform_name=darwin-arm64 ;;
-          darwin64)   platform_name=darwin ;;
-          windows*)  platform_name=win${{matrix.architecture}} ;;
-          linux32)   platform_name=linux-i386 ;;
-          linux64)   platform_name=linux-amd64 ;;
-          linuxarm64)   platform_name=linux-arm64 ;;
+          darwin64)      platform_name=darwin ;;
+          windows*)      platform_name=win${{matrix.architecture}} ;;
+          linux32)       platform_name=linux-i386 ;;
+          linux64)       platform_name=linux-amd64 ;;
+          linuxarm64)    platform_name=linux-arm64 ;;
         esac
 
         short_commit=$(git rev-parse --short HEAD)
@@ -351,7 +408,6 @@ jobs:
             echo "HASHLINK_DISTRIBUTION=$dist_folder.${{ matrix.archive_ext }}" >> $GITHUB_ENV
             ;;
         esac
-
 
     - name: "Share: build artifact"
       uses: actions/upload-artifact@v7
@@ -429,7 +485,9 @@ jobs:
 
     steps: *build-steps
 
+  ###########################################################
   build-android:
+  ###########################################################
     runs-on: ubuntu-latest
     steps:
 
@@ -444,16 +502,41 @@ jobs:
     - name: "Configure: Haxelib"
       run: |
         set -eux
-
         haxelib setup ~/haxelib
         haxelib install hashlink
         haxelib list
+
+    - name: "Build SDL3 & SDL3_image for Android"
+      run: |
+        set -eux
+        curl -fsSL --retry 3 --retry-delay 5 -o /tmp/SDL3.tar.gz https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz
+        tar -xzf /tmp/SDL3.tar.gz -C /tmp
+        cmake -S /tmp/SDL3-3.4.10 -B /tmp/SDL3-android -G Ninja \
+          --toolchain $ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_PLATFORM=24 -DANDROID_ABI=arm64-v8a \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=/tmp/android-deps
+        cmake --build /tmp/SDL3-android
+        cmake --install /tmp/SDL3-android
+
+        curl -fsSL --retry 3 --retry-delay 5 -o /tmp/SDL3_image.tar.gz https://github.com/libsdl-org/SDL_image/releases/download/release-3.4.0/SDL3_image-3.4.0.tar.gz
+        tar -xzf /tmp/SDL3_image.tar.gz -C /tmp
+        cmake -S /tmp/SDL3_image-3.4.0 -B /tmp/SDL3_image-android -G Ninja \
+          --toolchain $ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_PLATFORM=24 -DANDROID_ABI=arm64-v8a \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_PREFIX_PATH=/tmp/android-deps \
+          -DCMAKE_INSTALL_PREFIX=/tmp/android-deps \
+          -DSDLIMAGE_VENDORED=ON
+        cmake --build /tmp/SDL3_image-android
+        cmake --install /tmp/SDL3_image-android
 
     - name: "Build: Hashlink"
       run: |
         set -ex
         cmake -B build -G Ninja --toolchain $ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-          -DANDROID_PLATFORM=24 -DANDROID_ABI=arm64-v8a -DBUILD_SHARED_LIBS=OFF -DWITH_VM=OFF
+          -DANDROID_PLATFORM=24 -DANDROID_ABI=arm64-v8a -DBUILD_SHARED_LIBS=OFF -DWITH_VM=OFF \
+          -DCMAKE_PREFIX_PATH=/tmp/android-deps
         cmake --build build
 
   ###########################################################
@@ -467,7 +550,7 @@ jobs:
         architecture: [x86_64, arm64]
         include:
         - architecture: arm64
-          test-flags: --skip-hl-jit # not yet supported
+          test-flags: --skip-hl-jit
 
         - os: linux
           runner: ubuntu-24.04
@@ -476,6 +559,7 @@ jobs:
         - os: linux
           architecture: arm64
           runner: ubuntu-24.04-arm
+          build_system: make
 
     runs-on: ${{ matrix.runner }}
     steps: &haxe-test-steps
@@ -508,7 +592,7 @@ jobs:
       if: matrix.os == 'darwin' && matrix.build_system == 'make'
       run: |
         brew update
-        brew install libpng jpeg-turbo libvorbis sqlite mbedtls
+        brew install libpng jpeg-turbo libvorbis sqlite mbedtls sdl3 sdl3_image
 
     - name: Install msbuild
       uses: microsoft/setup-msbuild@v3
@@ -534,11 +618,13 @@ jobs:
         fi
         sudo cp libhl.* *.hdll /usr/local/lib/
         if [[ "${{ matrix.os }}-${{ matrix.build_system }}" == "darwin-cmake" ]]; then
-          # cmake package already bundles shared third-party libs
           sudo cp *.dylib /usr/local/lib/
           otool -L *.hdll
         fi
         sudo cp include/* /usr/local/include/
+        if [[ "${{ matrix.os }}" == "linux" ]]; then
+          sudo ldconfig
+        fi
 
     - name: Install binary (Windows)
       if: matrix.os == 'windows'
@@ -597,7 +683,7 @@ jobs:
         architecture: [x86_64, arm64]
         include:
         - architecture: arm64
-          test-flags: --skip-hl-jit # not yet supported
+          test-flags: --skip-hl-jit
 
         - os: darwin
           runner: macos-15-intel
@@ -634,7 +720,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-linux, build-darwin, build-windows, haxe-test-linux, haxe-test-darwin, haxe-test-windows]
     if: github.ref == 'refs/heads/master'
-    concurrency: publish-latest-release # https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idconcurrency
+    concurrency: publish-latest-release
 
     steps:
 
@@ -644,7 +730,7 @@ jobs:
     - name: "Get: all build artifacts"
       uses: actions/download-artifact@v8
       with:
-        name: _artifacts
+        path: _artifacts
         skip-decompress: true
 
     - name: "Extract build artifacts"
