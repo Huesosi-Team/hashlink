@@ -139,12 +139,12 @@ ifeq ($(MARCH),32)
 CFLAGS += -msse2 -mfpmath=sse
 CC=i686-pc-cygwin-gcc
 BUILD_DIR = Release
-VS_SDL_LIBRARY ?= include/sdl/lib/x86/SDL3.dll include/sdl-image/lib/x86/SDL3_image.dll
+VS_SDL_LIBRARY ?= include/sdl/lib/x86/SDL3.dll $(wildcard include/sdl-image/lib/x86/*.dll)
 VS_OPENAL_LIBRARY ?= include/openal/bin/Win32/soft_oal.dll
 VS_DX_LIBRARY ?= include/dx/bin/x86/dxcompiler.dll include/dx/bin/x86/dxil.dll
 else
 BUILD_DIR = x64/Release
-VS_SDL_LIBRARY ?= include/sdl/lib/x64/SDL3.dll include/sdl-image/lib/x64/SDL3_image.dll
+VS_SDL_LIBRARY ?= include/sdl/lib/x64/SDL3.dll $(wildcard include/sdl-image/lib/x64/*.dll)
 VS_OPENAL_LIBRARY ?= include/openal/bin/Win64/soft_oal.dll
 VS_DX_LIBRARY ?= include/dx/bin/x64/dxcompiler.dll include/dx/bin/x64/dxil.dll
 endif
