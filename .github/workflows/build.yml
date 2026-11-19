@@ -512,6 +512,7 @@ jobs:
 
         curl -fsSL --retry 3 --retry-delay 5 -o /tmp/SDL3_image.tar.gz https://github.com/libsdl-org/SDL_image/releases/download/release-3.4.0/SDL3_image-3.4.0.tar.gz
         tar -xzf /tmp/SDL3_image.tar.gz -C /tmp
+        (cd /tmp/SDL3_image-3.4.0 && ./external/download.sh)
         cmake -S /tmp/SDL3_image-3.4.0 -B /tmp/SDL3_image-android -G Ninja \
           --toolchain $ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
           -DANDROID_PLATFORM=24 -DANDROID_ABI=arm64-v8a \
@@ -519,7 +520,9 @@ jobs:
           -DCMAKE_FIND_ROOT_PATH=/tmp/android-deps \
           -DCMAKE_PREFIX_PATH=/tmp/android-deps \
           -DCMAKE_INSTALL_PREFIX=/tmp/android-deps \
-          -DSDLIMAGE_VENDORED=ON
+          -DSDLIMAGE_VENDORED=ON \
+          -DSDLIMAGE_WEBP=ON \
+          -DSDLIMAGE_AVIF=OFF -DSDLIMAGE_JXL=OFF -DSDLIMAGE_TIF=OFF
         cmake --build /tmp/SDL3_image-android
         cmake --install /tmp/SDL3_image-android
 
