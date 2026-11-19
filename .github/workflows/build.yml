@@ -591,14 +591,51 @@ jobs:
           chmod +x /usr/local/bin/gcc
         fi
         sudo apt-get update -qqy
-        sudo apt-get install -qqy libpng16-16t64${SUFFIX} libjpeg-turbo8${SUFFIX} zlib1g${SUFFIX} libogg0${SUFFIX} libvorbis0a${SUFFIX} \
-          libvorbisfile3${SUFFIX} libvorbisenc2${SUFFIX} libsqlite3-0${SUFFIX} libmbedtls14t64${SUFFIX} ${EXTRA_APT_PKGS}
+        sudo apt-get install -qqy --no-install-recommends \
+          cmake pkg-config \
+          libpng-dev${SUFFIX} libjpeg-dev${SUFFIX} libwebp-dev${SUFFIX} \
+          libtiff-dev${SUFFIX} libavif-dev${SUFFIX} libjxl-dev${SUFFIX} \
+          zlib1g${SUFFIX} libogg0${SUFFIX} libvorbis0a${SUFFIX} \
+          libvorbisfile3${SUFFIX} libvorbisenc2${SUFFIX} libsqlite3-0${SUFFIX} \
+          libmbedtls14t64${SUFFIX} libx11-dev libxext-dev libxrandr-dev \
+          libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+          libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev \
+          libgles2-mesa-dev libegl1-mesa-dev libdbus-1-dev libudev-dev \
+          libwayland-dev ${EXTRA_APT_PKGS}
+
+    - name: "Build and install SDL3 & SDL3_image"
+      if: matrix.os == 'linux'
+      run: |
+        set -eux
+        curl -fsSL --retry 3 --retry-delay 5 -o /tmp/SDL3.tar.gz https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz
+        tar -xzf /tmp/SDL3.tar.gz -C /tmp
+        cmake -S /tmp/SDL3-3.4.10 -B /tmp/SDL3-build -DCMAKE_BUILD_TYPE=Release
+        cmake --build /tmp/SDL3-build --parallel
+        sudo cmake --install /tmp/SDL3-build
+        sudo ldconfig
+
+        curl -fsSL --retry 3 --retry-delay 5 -o /tmp/SDL3_image.tar.gz https://github.com/libsdl-org/SDL_image/releases/download/release-3.4.0/SDL3_image-3.4.0.tar.gz
+        tar -xzf /tmp/SDL3_image.tar.gz -C /tmp
+        cmake -S /tmp/SDL3_image-3.4.0 -B /tmp/SDL3_image-build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DSDLIMAGE_VENDORED=OFF \
+          -DSDLIMAGE_AVIF=ON \
+          -DSDLIMAGE_JXL=ON \
+          -DSDLIMAGE_TIF=ON \
+          -DSDLIMAGE_WEBP=ON
+        cmake --build /tmp/SDL3_image-build --parallel
+        sudo cmake --install /tmp/SDL3_image-build
+        sudo ldconfig
 
     - name: Install brew packages
-      if: matrix.os == 'darwin' && matrix.build_system == 'make'
+      if: matrix.os == 'darwin'
       run: |
         brew update
-        brew install libpng jpeg-turbo libvorbis sqlite mbedtls sdl3 sdl3_image
+        if [ "${{ matrix.build_system }}" == "make" ]; then
+          brew install libvorbis sqlite mbedtls sdl3 sdl3_image
+        else
+          brew install sdl3 sdl3_image
+        fi
 
     - name: Install msbuild
       uses: microsoft/setup-msbuild@v3
