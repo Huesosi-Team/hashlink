@@ -500,6 +500,9 @@ jobs:
     - name: "Build SDL3 & SDL3_image for Android"
       run: |
         set -eux
+        sudo apt-get update -y
+        sudo apt-get install --no-install-recommends -y meson ninja-build
+
         curl -fsSL --retry 3 --retry-delay 5 -o /tmp/SDL3.tar.gz https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz
         tar -xzf /tmp/SDL3.tar.gz -C /tmp
         cmake -S /tmp/SDL3-3.4.10 -B /tmp/SDL3-android -G Ninja \
@@ -507,7 +510,7 @@ jobs:
           -DANDROID_PLATFORM=24 -DANDROID_ABI=arm64-v8a \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_INSTALL_PREFIX=/tmp/android-deps
-        cmake --build /tmp/SDL3-android
+        cmake --build /tmp/SDL3-android --parallel
         cmake --install /tmp/SDL3-android
 
         curl -fsSL --retry 3 --retry-delay 5 -o /tmp/SDL3_image.tar.gz https://github.com/libsdl-org/SDL_image/releases/download/release-3.4.0/SDL3_image-3.4.0.tar.gz
@@ -520,10 +523,17 @@ jobs:
           -DCMAKE_FIND_ROOT_PATH=/tmp/android-deps \
           -DCMAKE_PREFIX_PATH=/tmp/android-deps \
           -DCMAKE_INSTALL_PREFIX=/tmp/android-deps \
+          -DBUILD_SHARED_LIBS=OFF \
+          -DBUILD_TESTING=OFF \
           -DSDLIMAGE_VENDORED=ON \
+          -DSDLIMAGE_AVIF=ON \
+          -DSDLIMAGE_JXL=ON \
+          -DSDLIMAGE_TIF=ON \
           -DSDLIMAGE_WEBP=ON \
-          -DSDLIMAGE_AVIF=OFF -DSDLIMAGE_JXL=OFF -DSDLIMAGE_TIF=OFF
-        cmake --build /tmp/SDL3_image-android
+          -DJPEGXL_ENABLE_TOOLS=OFF \
+          -DJPEGXL_ENABLE_MANPAGES=OFF \
+          -DJPEGXL_ENABLE_EXAMPLES=OFF
+        cmake --build /tmp/SDL3_image-android --parallel
         cmake --install /tmp/SDL3_image-android
 
     - name: "Build: Hashlink"
