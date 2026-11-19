@@ -68,6 +68,11 @@ jobs:
               libmbedtls-dev${SUFFIX} \
               libopenal-dev${SUFFIX} \
               libpng-dev${SUFFIX} \
+              libjpeg-dev${SUFFIX} \
+              libwebp-dev${SUFFIX} \
+              libtiff-dev${SUFFIX} \
+              libavif-dev${SUFFIX} \
+              libjxl-dev${SUFFIX} \
               libuv1-dev${SUFFIX} \
               libvorbis-dev${SUFFIX} \
               libsqlite3-dev${SUFFIX} \
@@ -136,10 +141,13 @@ jobs:
               cp -r /tmp/sdl_image_raw/*/x86_64-w64-mingw32/* include/sdl-image/
               cp -r include/sdl/x86_64-w64-mingw32/* include/sdl/
               cp include/sdl-image/lib/libSDL3_image.dll.a include/sdl-image/lib/x64/SDL3_image.lib
+              if [ -d include/sdl-image/bin/optional ]; then
+                cp include/sdl-image/bin/optional/*.dll include/sdl-image/bin/
+              fi
             else
               cp -r "$(find /tmp/sdl_image_raw -type d -name SDL3_image | head -n 1)" include/sdl-image/include/
               cp "$(find /tmp/sdl_image_raw -path '*x64*' -name 'SDL3_image.lib' | head -n 1)" include/sdl-image/lib/x64/
-              cp "$(find /tmp/sdl_image_raw -path '*x64*' -name 'SDL3_image.dll' | head -n 1)" include/sdl-image/lib/x64/
+              find /tmp/sdl_image_raw -path '*x64*' -name '*.dll' -exec cp {} include/sdl-image/lib/x64/ \;
             fi
             rm -rf /tmp/sdl_image_raw
 
@@ -199,7 +207,11 @@ jobs:
         tar -xzf /tmp/SDL3_image.tar.gz -C /tmp
         cmake -S /tmp/SDL3_image-3.4.0 -B /tmp/SDL3_image-build \
           -DCMAKE_BUILD_TYPE=Release \
-          -DSDLIMAGE_VENDORED=OFF
+          -DSDLIMAGE_VENDORED=OFF \
+          -DSDLIMAGE_AVIF=ON \
+          -DSDLIMAGE_JXL=ON \
+          -DSDLIMAGE_TIF=ON \
+          -DSDLIMAGE_WEBP=ON
         cmake --build /tmp/SDL3_image-build --parallel
         sudo cmake --install /tmp/SDL3_image-build
         sudo ldconfig
@@ -275,7 +287,7 @@ jobs:
               32) BUILD_FOLDER=${{ matrix.msbuild_configuration }} ;;
             esac
             cp include/sdl/lib/x64/SDL3.dll "$BUILD_FOLDER/"
-            cp include/sdl-image/lib/x64/SDL3_image.dll "$BUILD_FOLDER/"
+            cp include/sdl-image/lib/x64/*.dll "$BUILD_FOLDER/"
             echo "WINDOWS_BUILD_FOLDER=$BUILD_FOLDER" >> $GITHUB_ENV
             ;;
 
@@ -368,6 +380,13 @@ jobs:
 
         case "${{ matrix.build_system }}" in
           cmake*)
+            if [[ "${{ matrix.target }}" == "windows" ]]; then
+              if [[ "${{ matrix.build_system }}" == "cmake-mingw" ]]; then
+                cp include/sdl-image/bin/*.dll build/bin/
+              else
+                cp include/sdl-image/lib/x64/*.dll build/bin/
+              fi
+            fi
             dist_folder=hashlink-${short_commit}-${platform_name}-${{ matrix.build_system }}
             cd build && cpack -D CPACK_PACKAGE_FILE_NAME=$dist_folder -C ${{ matrix.cmake_configuration }}
 
@@ -500,8 +519,7 @@ jobs:
           -DCMAKE_FIND_ROOT_PATH=/tmp/android-deps \
           -DCMAKE_PREFIX_PATH=/tmp/android-deps \
           -DCMAKE_INSTALL_PREFIX=/tmp/android-deps \
-          -DSDLIMAGE_VENDORED=OFF \
-          -DSDLIMAGE_AVIF=OFF -DSDLIMAGE_JXL=OFF -DSDLIMAGE_TIF=OFF -DSDLIMAGE_WEBP=OFF
+          -DSDLIMAGE_VENDORED=ON
         cmake --build /tmp/SDL3_image-android
         cmake --install /tmp/SDL3_image-android
 
