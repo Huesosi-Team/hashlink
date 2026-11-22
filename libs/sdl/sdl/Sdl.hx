@@ -180,6 +180,10 @@ class Sdl {
 			return @:privateAccess String.fromUTF8(t);
 	}
 
+	@:hlNative("?sdl", "set_live_resize_callback")
+	public static function setLiveResizeCallback( cb : Void -> Void ) : Void {
+	}
+
 	@:hlNative("?sdl", "get_screen_width")
 	static function get_screen_width() : Int {
 		return 0;
