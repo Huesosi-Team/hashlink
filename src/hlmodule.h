@@ -81,10 +81,13 @@ typedef struct {
 	int version;
 	int file_size;
 	unsigned char build_id[HL_BUILD_ID_SIZE];
+	unsigned char *raw_data;
+	int raw_size;
 	int nints;
 	int nfloats;
 	int nstrings;
 	int nbytes;
+	int bytes_size;
 	int ntypes;
 	int nglobals;
 	int nnatives;
@@ -128,6 +131,8 @@ typedef struct {
 	int *functions_signs;
 	int *functions_hashes;
 	int *functions_indexes;
+	int *bytes_hashes;
+	int *types_nominal;
 } hl_code_hash;
 
 #if defined(HL_64) && defined(HL_WIN)
@@ -157,6 +162,8 @@ typedef struct {
 	void **functions_extern;
 	hl_type_obj ***hot_uses;
 	void **hot_code;
+	int *globals_remap;
+	int globals_remap_count;
 	bool debug;
 	hl_module_context ctx;
 #ifdef WIN64_UNWIND_TABLES
@@ -169,12 +176,9 @@ hl_code *hl_code_read( const unsigned char *data, int size, char **error_msg );
 int hl_code_read_header( const unsigned char *data, int size, int *file_size, unsigned char *build_id );
 
 hl_code_hash *hl_code_hash_alloc( hl_code *c );
-void hl_code_hash_finalize( hl_code_hash *h );
 void hl_code_hash_free( hl_code_hash *h );
 void hl_code_free( hl_code *c );
 int hl_code_type_index( hl_code *c, hl_type *t );
-int hl_code_hash_type( hl_code_hash *h, hl_type *t );
-void hl_code_hash_remap_globals( hl_code_hash *hnew, int *remap, int old_count, hl_type **old_types, int *old_signs );
 
 const uchar *hl_get_ustring( hl_code *c, int index );
 const uchar *hl_function_lname( hl_code *c, hl_function *f );
@@ -196,6 +200,9 @@ void hl_module_free( hl_module *m );
 h_bool hl_module_debug( hl_module *m, int port, h_bool wait );
 hl_type *hl_module_resolve_type( hl_module *m, hl_type *t, bool err );
 hl_module **hl_get_modules( int *count );
+void hl_debug_lock( bool lock );
+void hl_debug_module_added( hl_module *m );
+void hl_debug_module_break( void );
 
 #define HL_HOT_RELOAD_VSLOTS 64
 void hl_hot_reload_prepare( hl_module *m );
