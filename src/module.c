@@ -261,6 +261,10 @@ int hl_module_capture_stack_walk( void *pc, void *fp, void *stack_base, void *st
 #define UREG_RSP	4
 #define UREG_RBP	5
 
+#ifdef HL_VCC
+#	define UNWIND_SEH_GUARD
+#endif
+
 static bool unwind_read( void *addr, void *stack_base, void *stack_top, void *copy, void **out ) {
 	if( addr < stack_base || (char*)addr + sizeof(void*) > (char*)stack_top || (((int_val)addr) & (sizeof(void*) - 1)) ) return false;
 	*out = *walk_at(addr,stack_base,copy);
@@ -403,9 +407,12 @@ static bool unwind_native_frame( void **pc, char **sp, void **regs, bool leaf, v
 	this can't be fooled by stale frames left in the stack by previous calls.
 */
 int hl_module_capture_stack_unwind( void *pc, void *sp, void **regs, bool leaf, void *stack_base, void *stack_top, void *copy, void **out, int size ) {
-	int count = 0;
+	volatile int count = 0;
 	char *rsp = (char*)sp;
 	if( !out ) size = 0x7FFFFFFF;
+#ifdef UNWIND_SEH_GUARD
+	__try {
+#endif
 	while( count < size && pc ) {
 		if( module_is_jit_code(pc,false) ) {
 			void **fp = (void**)regs[UREG_RBP];
@@ -456,9 +463,37 @@ int hl_module_capture_stack_unwind( void *pc, void *sp, void **regs, bool leaf, 
 		if( rsp <= prev ) break;
 		leaf = false;
 	}
+#ifdef UNWIND_SEH_GUARD
+	} __except( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
+	}
+#endif
 	return count;
 }
 
+#endif
+
+#ifdef WIN64_UNWIND_TABLES
+static int module_jit_function( DWORD64 ip ) {
+	for(int i=0;i<modules_count;i++) {
+		hl_module *m = cur_modules[i];
+		DWORD64 code = (DWORD64)m->jit_code;
+		if( ip < code || ip >= code + m->codesize ) continue;
+		DWORD offs = (DWORD)(ip - code);
+		PRUNTIME_FUNCTION t = m->unwind_table;
+		int lo = 0, hi = m->unwind_table_size;
+		while( lo < hi ) {
+			int mid = (lo + hi) >> 1;
+			if( offs < t[mid].BeginAddress )
+				hi = mid;
+			else if( offs >= t[mid].EndAddress )
+				lo = mid + 1;
+			else
+				return offs - t[mid].BeginAddress >= ((unsigned char*)code)[1] ? 1 : 2;
+		}
+		return -1;
+	}
+	return 0;
+}
 #endif
 
 int hl_module_capture_stack( void **stack, int size ) {
@@ -467,38 +502,36 @@ int hl_module_capture_stack( void **stack, int size ) {
 	RtlCaptureContext(&context);
 	int count = 0;
 	while(true) {
-		DWORD64 base;
 		DWORD64 ip = context.Rip;
-		PRUNTIME_FUNCTION fn_entry = RtlLookupFunctionEntry(ip, &base, NULL);
-		if (!fn_entry) {
+		int jit = module_jit_function(ip);
+		if( jit < 0 )
 			break;
-		}
-		void *module_addr = (void*)ip;
-		for(int i=0;i<modules_count;i++) {
-			hl_module *m = cur_modules[i];
-			unsigned char *code = m->jit_code;
-			int code_size = m->codesize;
-			if( module_addr >= (void*)code && module_addr < (void*)(code + code_size) ) {
-				if( stack && count == size )
-					break;
-				if( stack )
-					stack[count++] = module_addr;
-				else
-					count++;
+		if( jit ) {
+			if( stack && count == size )
 				break;
-			}
+			if( stack )
+				stack[count++] = (void*)ip;
+			else
+				count++;
+			if( stack && count == size )
+				break;
 		}
-
-		if (stack && count == size) {
+		if( jit == 1 ) {
+			DWORD64 *fp = (DWORD64*)context.Rbp;
+			context.Rip = fp[1];
+			context.Rsp = (DWORD64)(fp + 2);
+			context.Rbp = fp[0];
+		} else {
+			DWORD64 base;
+			PRUNTIME_FUNCTION fn_entry = RtlLookupFunctionEntry(ip, &base, NULL);
+			if( !fn_entry )
+				break;
+			void *handler_data;
+			ULONG64 establisher_frame;
+			RtlVirtualUnwind(0, base, ip, fn_entry, &context, &handler_data, &establisher_frame, NULL);
+		}
+		if( context.Rip == 0 )
 			break;
-		}
-
-		void* handler_data;
-		ULONG64 establisher_frame;
-		RtlVirtualUnwind(0, base, ip, fn_entry, &context, &handler_data, &establisher_frame, NULL);
-		if (context.Rip == 0) {
-			break;
-		}
 	}
 	return count;
 #else
